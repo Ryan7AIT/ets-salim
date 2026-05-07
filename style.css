@@ -784,6 +784,16 @@ td {
     .top-logout {
         padding: 10px 14px;
     }
+
+    .notification-panel {
+        position: fixed;
+        top: 82px;
+        left: 16px;
+        right: 16px;
+        width: auto;
+        max-width: none;
+        max-height: calc(100vh - 98px);
+    }
 }
 
 .hidden {
@@ -1067,7 +1077,10 @@ td {
     }
 
     .notification-panel {
-        right: -8px;
+        top: 88px;
+        left: 12px;
+        right: 12px;
+        max-height: calc(100vh - 104px);
     }
 
     .notification-item,

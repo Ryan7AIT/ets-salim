@@ -94,9 +94,9 @@ function defaultInterventionStatus(date) {
 
 function createDefaultClients() {
     return [
-        { id: 1, company: 'Grand Hôtel Residencia', contact: 'Sarah Jenkins', phone: '01 55 01 02 00', email: 's.jenkins@grandhotel.com', address: '123 Bd Océan' },
-        { id: 2, company: 'City Property Mgmt', contact: 'Marc Thompson', phone: '01 55 01 99 00', email: 'marc@cityprop.com', address: '456 Rue Affaires' },
-        { id: 3, company: 'Blue Sky Appartements', contact: 'Elena Rodriguez', phone: '01 55 02 34 00', email: 'elena@bluesky.com', address: '789 Allée Ciel' },
+        { id: 1, company: 'Frater razes', contact: 'Khaled', phone: '01 55 01 02 00', email: 'khaled@fraterrazes.com', address: 'Alger, rouiba' },
+        { id: 2, company: 'Ramy', contact: 'Yacine', phone: '01 55 01 99 00', email: 'yacine@ramy.com', address: '456 Rue Affaires' },
+        { id: 3, company: 'Seal', contact: 'Karim', phone: '01 55 02 34 00', email: 'karim@seal.com', address: '789 Allée Ciel' },
     ];
 }
 
@@ -105,7 +105,7 @@ function createDefaultContracts() {
         {
             id: 1,
             name: 'Maintenance Annuelle A',
-            client: 'Grand Hôtel Residencia',
+            client: 'Frater razes',
             start: '2026-01-10',
             end: '2026-12-10',
             total: 6,
@@ -117,7 +117,7 @@ function createDefaultContracts() {
         {
             id: 2,
             name: 'Support Urgence B',
-            client: 'City Property Mgmt',
+            client: 'Ramy',
             start: '2026-03-01',
             end: '2026-12-01',
             total: 8,
@@ -129,7 +129,7 @@ function createDefaultContracts() {
         {
             id: 3,
             name: 'Inspection Canalisations',
-            client: 'Blue Sky Appartements',
+            client: 'Seal',
             start: '2026-04-15',
             end: '2026-07-15',
             total: 4,
@@ -197,6 +197,7 @@ createApp({
 
             editingClientId: null,
             editingContractId: null,
+            editingInterventionId: null,
             selectedContractId: null,
 
             clientForm: { company: '', contact: '', phone: '', email: '', address: '' },
@@ -720,7 +721,7 @@ createApp({
             ].sort((left, right) => new Date(left.date) - new Date(right.date));
         },
 
-        openInterventionModal() {
+        resetInterventionForm() {
             this.interventionForm = {
                 client: '',
                 contractId: '',
@@ -729,24 +730,101 @@ createApp({
                 status: 'Planifié',
                 notes: '',
             };
+        },
+
+        openInterventionModal() {
+            this.editingInterventionId = null;
+            this.resetInterventionForm();
             this.openModal('interventionModal');
         },
 
-        addIntervention() {
+        startEditIntervention(intervention) {
+            this.editingInterventionId = intervention.id;
+            this.interventionForm = {
+                client: intervention.client,
+                contractId: intervention.contractId ?? '',
+                date: intervention.date,
+                priority: intervention.priority,
+                status: intervention.status,
+                notes: intervention.notes || '',
+            };
+            this.openModal('interventionModal');
+        },
+
+        syncInterventionClientWithContract() {
+            if (!this.interventionForm.contractId) return;
+
+            const contract = this.contracts.find(item => item.id === Number(this.interventionForm.contractId));
+            if (contract) this.interventionForm.client = contract.client;
+        },
+
+        updateContractInterventionDate(intervention, nextDate) {
+            if (!intervention?.contractId) return true;
+            if (!nextDate) {
+                this.showToast('Sélectionnez une date d\'intervention valide.');
+                return false;
+            }
+
+            const contract = this.contracts.find(item => item.id === intervention.contractId);
+            if (!contract) return true;
+
+            const nextDates = contract.interventionDates.map(date =>
+                date === intervention.date ? nextDate : date
+            );
+            const uniqueDates = uniqueSortedDates(nextDates);
+
+            if (uniqueDates.length !== nextDates.length) {
+                this.showToast('Cette date existe déjà dans le contrat lié.');
+                return false;
+            }
+
+            const updatedContract = {
+                ...contract,
+                planningMode: 'manual',
+                interventionDates: uniqueDates,
+                start: uniqueDates[0] || contract.start,
+                end: uniqueDates[uniqueDates.length - 1] || contract.end,
+                total: uniqueDates.length,
+            };
+
+            this.contracts = this.contracts.map(item => item.id === contract.id ? updatedContract : item);
+            return true;
+        },
+
+        submitIntervention() {
+            const existing = this.editingInterventionId
+                ? this.interventions.find(item => item.id === this.editingInterventionId)
+                : null;
+            const linkedContract = this.interventionForm.contractId
+                ? this.contracts.find(item => item.id === Number(this.interventionForm.contractId))
+                : null;
+
+            if (existing?.contractId && !this.updateContractInterventionDate(existing, this.interventionForm.date)) {
+                return;
+            }
+
             const payload = this.normalizeIntervention({
-                id: `INT-${Date.now()}`,
-                client: this.interventionForm.client,
+                id: this.editingInterventionId || `INT-${Date.now()}`,
+                client: linkedContract?.client || this.interventionForm.client,
                 contractId: this.interventionForm.contractId ? Number(this.interventionForm.contractId) : null,
                 date: this.interventionForm.date,
                 priority: this.interventionForm.priority,
                 status: this.interventionForm.status,
                 notes: this.interventionForm.notes,
-                source: 'manual',
+                source: existing?.source || 'manual',
             });
 
-            this.interventions.push(payload);
+            if (this.editingInterventionId) {
+                this.interventions = this.interventions.map(intervention =>
+                    intervention.id === this.editingInterventionId ? payload : intervention
+                );
+                this.showToast('Intervention mise à jour avec succès !');
+            } else {
+                this.interventions.push(payload);
+                this.showToast('Intervention planifiée avec succès !');
+            }
+
             this.closeModal();
-            this.showToast('Intervention planifiée avec succès !');
         },
 
         deleteIntervention(id) {

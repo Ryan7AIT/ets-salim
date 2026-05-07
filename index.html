@@ -338,6 +338,10 @@
                                                 </select>
                                             </td>
                                             <td>
+                                                <button class="icon-btn" title="Modifier"
+                                                    @click="startEditIntervention(i)">
+                                                    <i class="far fa-edit"></i>
+                                                </button>
                                                 <button class="icon-btn" title="Supprimer" style="color:var(--danger)"
                                                     @click="deleteIntervention(i.id)">
                                                     <i class="far fa-trash-alt"></i>
@@ -575,24 +579,31 @@
         <!-- Modal Intervention -->
         <div class="modal" v-show="activeModal === 'interventionModal'">
             <div class="modal-header">
-                <h3>Planifier une Intervention</h3>
+                <h3>{{ editingInterventionId ? 'Modifier l\'Intervention' : 'Planifier une Intervention' }}</h3>
                 <button class="close-modal" @click="closeModal()">&times;</button>
             </div>
-            <form class="modal-body" @submit.prevent="addIntervention()">
+            <form class="modal-body" @submit.prevent="submitIntervention()">
                 <div class="form-group">
                     <label>Client</label>
-                    <select v-model="interventionForm.client" required>
+                    <select v-model="interventionForm.client"
+                        :disabled="editingInterventionId && interventionForm.contractId" required>
                         <option value="" disabled>Sélectionner un client</option>
                         <option v-for="c in clients" :key="c.id" :value="c.company">{{ c.company }}</option>
                     </select>
                 </div>
                 <div class="form-group">
                     <label>Contrat lié (optionnel)</label>
-                    <select v-model="interventionForm.contractId">
+                    <select v-model="interventionForm.contractId" :disabled="editingInterventionId"
+                        @change="syncInterventionClientWithContract()">
                         <option value="">Aucun contrat</option>
                         <option v-for="contract in contracts" :key="contract.id" :value="contract.id">{{
                             contract.name }} — {{ contract.client }}</option>
                     </select>
+                    <p v-if="editingInterventionId && interventionForm.contractId"
+                        style="color:var(--text-muted);font-size:0.82rem;margin-top:8px">
+                        Le client et le contrat restent liés au contrat. Si vous modifiez la date ici, le planning du
+                        contrat sera mis à jour aussi.
+                    </p>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
@@ -624,7 +635,8 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="secondary-btn" @click="closeModal()">Annuler</button>
-                    <button type="submit" class="primary-btn">Planifier</button>
+                    <button type="submit" class="primary-btn">{{ editingInterventionId ? 'Mettre à jour' :
+                        'Planifier' }}</button>
                 </div>
             </form>
         </div>
