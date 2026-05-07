@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ets bellal salim </title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div id="app">
+
+        <section v-if="!isAuthenticated" class="login-screen">
+            <div class="login-panel">
+                <div class="login-brand">
+                    <div>
+                        <p class="login-kicker">Espace d'administration</p>
+                        <h1>ets bellal salim</h1>
+                    </div>
+                </div>
+                <p class="login-copy">Connectez-vous pour gérer les clients, contrats et interventions.</p>
+
+                <form class="login-form" @submit.prevent="login()">
+                    <div class="form-group">
+                        <label>Identifiant</label>
+                        <input type="text" v-model="loginForm.username" placeholder="admin" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Mot de passe</label>
+                        <input type="password" v-model="loginForm.password" placeholder="admin" required>
+                    </div>
+                    <p class="login-hint">Identifiants de démonstration : admin / admin</p>
+                    <p v-if="loginError" class="login-error">{{ loginError }}</p>
+                    <button type="submit" class="primary-btn login-submit">Se connecter</button>
+                </form>
+            </div>
+        </section>
+
+        <template v-else>
+            <!-- Sidebar -->
+            <aside class="sidebar" :class="{ open: sidebarOpen }">
+                <div class="sidebar-header">
+                    <div class="logo">
+                        <span>ets bellal salim</span>
+                    </div>
+                    <button class="mobile-close" @click="sidebarOpen = false"><i class="fas fa-times"></i></button>
+                </div>
+                <nav class="sidebar-nav">
+                    <ul>
+                        <li :class="{ active: currentPage === 'dashboard' }" @click="navigate('dashboard')">
+                            <a href="#"><i class="fas fa-th-large"></i> <span>Tableau de bord</span></a>
+                        </li>
+                        <li :class="{ active: currentPage === 'clients' }" @click="navigate('clients')">
+                            <a href="#"><i class="fas fa-users"></i> <span>Clients</span></a>
+                        </li>
+                        <li :class="{ active: currentPage === 'contracts' }" @click="navigate('contracts')">
+                            <a href="#"><i class="fas fa-file-contract"></i> <span>Contrats</span></a>
+                        </li>
+                        <li :class="{ active: currentPage === 'interventions' }" @click="navigate('interventions')">
+                            <a href="#"><i class="fas fa-calendar-check"></i> <span>Interventions</span></a>
+                        </li>
+                        <li :class="{ active: currentPage === 'parametres' }" @click="navigate('parametres')">
+                            <a href="#"><i class="fas fa-cog"></i> <span>Paramètres</span></a>
+                        </li>
+
+                    </ul>
+                </nav>
+                <div class="sidebar-footer">
+                    <div class="user-info">
+                        <img src="https://ui-avatars.com/api/?name=Admin+User&background=2563EB&color=fff" alt="Avatar">
+                        <div>
+                            <p class="user-name">Admin User</p>
+                            <p class="user-role">Responsable Opérations</p>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Main Content -->
+            <main class="main-wrapper">
+                <!-- Top Navigation -->
+                <header class="top-nav">
+                    <div class="top-nav-left">
+                        <button class="mobile-toggle" @click="sidebarOpen = true"><i class="fas fa-bars"></i></button>
+                        <h1>{{ pageTitle }}</h1>
+                    </div>
+                    <div class="top-nav-right">
+                        <div class="notification-menu" @click.stop>
+                            <button class="icon-btn notification-trigger" @click="toggleNotifications()">
+                                <i class="far fa-bell"></i>
+                                <span v-if="unreadNotificationsCount" class="notif-dot"></span>
+                            </button>
+                            <div v-if="notificationsOpen" class="notification-panel">
+                                <div class="notification-header">
+                                    <div>
+                                        <h3>Notifications</h3>
+                                        <p>{{ unreadNotificationsCount }} non lue(s)</p>
+                                    </div>
+                                    <button class="text-btn" @click="markAllNotificationsRead()"
+                                        :disabled="!unreadNotificationsCount">
+                                        Tout lire
+                                    </button>
+                                </div>
+                                <div class="notification-list">
+                                    <div v-for="notification in notifications" :key="notification.id"
+                                        class="notification-item" :class="{ unread: !notification.read }">
+                                        <div>
+                                            <p class="notification-title">{{ notification.title }}</p>
+                                            <p class="notification-text">{{ notification.message }}</p>
+                                            <span class="notification-time">{{ notification.time }}</span>
+                                        </div>
+                                        <button class="text-btn" @click="markNotificationRead(notification.id)"
+                                            :disabled="notification.read">
+                                            {{ notification.read ? 'Lu' : 'Marquer lu' }}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <button class="secondary-btn top-logout" @click="logout()">
+                            Déconnexion
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Content Area -->
+                <div class="content-container">
+
+                    <!-- Tableau de bord -->
+                    <section class="page" :class="{ active: currentPage === 'dashboard' }">
+                        <div class="stats-grid">
+                            <div class="stat-card" v-for="stat in dashboardStats" :key="stat.label">
+                                <div class="stat-icon" :class="stat.color"><i :class="stat.icon"></i></div>
+                                <div class="stat-details">
+                                    <p class="stat-label">{{ stat.label }}</p>
+                                    <h3 class="stat-value">{{ stat.value }}</h3>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="dashboard-charts">
+                            <div class="chart-container card">
+                                <h3>Interventions Mensuelles</h3>
+                                <canvas id="interventionsChart"></canvas>
+                            </div>
+                            <div class="chart-container card">
+                                <h3>Répartition des Contrats</h3>
+                                <canvas id="statusChart"></canvas>
+                            </div>
+                        </div>
+
+                        <div class="dashboard-bottom-grid">
+                            <div class="card table-card">
+                                <div class="card-header">
+                                    <h3>Prochaines Interventions</h3>
+                                    <button class="text-btn" @click="navigate('interventions')">Voir tout</button>
+                                </div>
+                                <div class="table-responsive">
+                                    <table>
+                                        <thead>
+                                            <tr>
+                                                <th>Client</th>
+                                                <th>Date</th>
+                                                <th>Statut</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr v-for="i in interventions.slice(0, 4)" :key="i.id">
+                                                <td>{{ i.client }}</td>
+                                                <td>{{ i.date }}</td>
+                                                <td><span class="badge" :class="statusClass(i.status)">{{ i.status
+                                                        }}</span>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="card activity-card">
+                                <div class="card-header">
+                                    <h3>Actions Rapides</h3>
+                                </div>
+                                <div class="quick-actions-list">
+                                    <button class="action-item" @click="openClientModal()">
+                                        <i class="fas fa-user-plus"></i> Ajouter un Client
+                                    </button>
+                                    <button class="action-item" @click="openContractModal()">
+                                        <i class="fas fa-file-circle-plus"></i> Créer un Contrat
+                                    </button>
+                                    <button class="action-item" @click="openInterventionModal()">
+                                        <i class="fas fa-calendar-plus"></i> Planifier une Intervention
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Clients -->
+                    <section class="page" :class="{ active: currentPage === 'clients' }">
+                        <div class="card">
+                            <div class="table-controls">
+                                <div class="search-bar">
+                                    <input type="text" v-model="clientSearch"
+                                        placeholder="Filtrer par société ou contact...">
+                                </div>
+                                <button class="primary-btn" @click="openClientModal()">
+                                    <i class="fas fa-plus"></i> Ajouter un Client
+                                </button>
+                            </div>
+                            <div class="table-responsive">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Société</th>
+                                            <th>Contact</th>
+                                            <th>Tél / Email</th>
+                                            <th>Adresse</th>
+                                            <th>Contrats</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="c in filteredClients" :key="c.id">
+                                            <td><strong>{{ c.company }}</strong></td>
+                                            <td>{{ c.contact }}</td>
+                                            <td>
+                                                <div style="font-size:0.85rem">{{ c.phone }}</div>
+                                                <div style="font-size:0.8rem;color:var(--text-muted)">{{ c.email }}
+                                                </div>
+                                            </td>
+                                            <td>{{ c.address }}</td>
+                                            <td><span class="badge badge-active">{{ clientContractCount(c.company) }}
+                                                    Actifs</span></td>
+                                            <td>
+                                                <button class="icon-btn" title="Modifier" @click="startEditClient(c)"><i
+                                                        class="far fa-edit"></i></button>
+                                                <button class="icon-btn" title="Supprimer" style="color:var(--danger)"
+                                                    @click="deleteClient(c.id)">
+                                                    <i class="far fa-trash-alt"></i>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                        <tr v-if="filteredClients.length === 0">
+                                            <td colspan="6"
+                                                style="text-align:center;color:var(--text-muted);padding:32px">
+                                                Aucun client trouvé.</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Contrats -->
+                    <section class="page" :class="{ active: currentPage === 'contracts' }">
+                        <div class="card">
+                            <div class="table-controls">
+                                <div class="search-bar">
+                                    <input type="text" v-model="contractSearch"
+                                        placeholder="Rechercher des contrats...">
+                                </div>
+                                <button class="primary-btn" @click="openContractModal()">
+                                    <i class="fas fa-plus"></i> Nouveau Contrat
+                                </button>
+                            </div>
+                            <div class="contracts-grid">
+                                <div class="contract-card card" v-for="c in filteredContracts" :key="c.id">
+                                    <div style="display:flex;justify-content:space-between;align-items:start">
+                                        <h4>{{ c.name }}</h4>
+                                        <span class="badge" :class="statusClass(c.status)">{{ c.status }}</span>
+                                    </div>
+                                    <p style="color:var(--text-muted);font-size:0.85rem;margin:8px 0">{{ c.client }}</p>
+                                    <div class="progress-container">
+                                        <div class="progress-bar"
+                                            :style="{ width: contractCompletionPercent(c) + '%' }"></div>
+                                    </div>
+                                    <div style="display:flex;justify-content:space-between;font-size:0.8rem">
+                                        <span>{{ contractCompletedCount(c) }} / {{ c.interventionDates.length }}
+                                            Interventions</span>
+                                        <span>{{ contractCompletionPercent(c) }}%</span>
+                                    </div>
+                                    <div class="contract-card-footer">
+                                        <span style="font-size:0.75rem">Expire : {{ c.end }}</span>
+                                        <div class="inline-actions">
+                                            <button class="text-btn" @click="openContractDetails(c)">Détails</button>
+                                            <button class="icon-btn" title="Modifier" @click="startEditContract(c)"><i
+                                                    class="far fa-edit"></i></button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div v-if="filteredContracts.length === 0"
+                                    style="padding:32px;text-align:center;color:var(--text-muted)">
+                                    Aucun contrat trouvé.
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Interventions -->
+                    <section class="page" :class="{ active: currentPage === 'interventions' }">
+                        <div class="view-toggle card">
+                            <button class="primary-btn" @click="openInterventionModal()">
+                                <i class="fas fa-plus"></i> Planifier
+                            </button>
+                        </div>
+
+                        <div class="card" v-show="interventionView === 'list'">
+                            <div class="table-responsive">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Client</th>
+                                            <th>Date</th>
+                                            <th>Priorité</th>
+                                            <th>Statut</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="i in interventions" :key="i.id">
+                                            <td>#{{ i.id }}</td>
+                                            <td>{{ i.client }}</td>
+                                            <td>{{ i.date }}</td>
+                                            <td><span :style="{ color: priorityColor(i.priority) }">{{ i.priority
+                                                    }}</span>
+                                            </td>
+                                            <td>
+                                                <select class="status-select" :value="i.status"
+                                                    @change="updateInterventionStatus(i.id, $event.target.value)">
+                                                    <option v-for="status in interventionStatusOptions()" :key="status"
+                                                        :value="status">{{ status }}</option>
+                                                </select>
+                                            </td>
+                                            <td>
+                                                <button class="icon-btn" title="Supprimer" style="color:var(--danger)"
+                                                    @click="deleteIntervention(i.id)">
+                                                    <i class="far fa-trash-alt"></i>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                </div>
+                </section>
+
+                <section class="page" :class="{ active: currentPage === 'reports' }">
+                    <div class="kpi-grid">
+                        <div class="card kpi-card">
+                            <p>Taux de complétion</p>
+                            <h2>{{ completionRate }} %</h2>
+                            <span class="trend up"><i class="fas fa-check-circle"></i> Calculé depuis les
+                                interventions</span>
+                        </div>
+                        <div class="card kpi-card">
+                            <p>Interventions ouvertes</p>
+                            <h2>{{ openInterventionsCount }}</h2>
+                            <span class="trend down"><i class="fas fa-stream"></i> Planifiées ou en cours</span>
+                        </div>
+                    </div>
+                    <div class="reports-main-grid">
+                        <div class="card">
+                            <h3>Top Clients par Volume</h3>
+                            <div v-for="client in topClientsByVolume" :key="client.company"
+                                style="display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)">
+                                <span>{{ client.company }}</span>
+                                <strong>{{ client.volume }} Int.</strong>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Paramètres -->
+                <section class="page" :class="{ active: currentPage === 'parametres' }">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Notifications</h3>
+                        </div>
+                        <div style="padding:24px">
+                            <div class="form-group">
+                                <label>Notifier avant l'intervention (jours)</label>
+                                <input type="number" min="1" max="60" style="max-width:120px"
+                                    v-model.number="notifSettings.daysBeforeIntervention">
+                                <p style="color:var(--text-muted);font-size:0.85rem;margin-top:8px">
+                                    Une notification apparaîtra automatiquement X jours avant chaque intervention
+                                    planifiée ou en cours.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+    </div>
+    </main>
+
+    <!-- ===== MODALS ===== -->
+    <div class="modal-overlay" :style="{ display: activeModal ? 'flex' : 'none' }" @click.self="closeModal()">
+
+        <!-- Modal Client -->
+        <div class="modal" v-show="activeModal === 'clientModal'">
+            <div class="modal-header">
+                <h3>{{ editingClientId ? 'Modifier le Client' : 'Ajouter un Client' }}</h3>
+                <button class="close-modal" @click="closeModal()">&times;</button>
+            </div>
+            <form class="modal-body" @submit.prevent="submitClient()">
+                <div class="form-group">
+                    <label>Nom de la société</label>
+                    <input type="text" v-model="clientForm.company" required>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Personne de contact</label>
+                        <input type="text" v-model="clientForm.contact" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Téléphone</label>
+                        <input type="tel" v-model="clientForm.phone">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Adresse email</label>
+                    <input type="email" v-model="clientForm.email">
+                </div>
+                <div class="form-group">
+                    <label>Adresse</label>
+                    <textarea rows="2" v-model="clientForm.address"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="secondary-btn" @click="closeModal()">Annuler</button>
+                    <button type="submit" class="primary-btn">{{ editingClientId ? 'Mettre à jour' :
+                        'Enregistrer' }}</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Modal Contrat -->
+        <div class="modal" v-show="activeModal === 'contractModal'">
+            <div class="modal-header">
+                <h3>{{ editingContractId ? 'Modifier le Contrat' : 'Créer un Contrat' }}</h3>
+                <button class="close-modal" @click="closeModal()">&times;</button>
+            </div>
+            <form class="modal-body" @submit.prevent="submitContract()">
+                <div class="form-group">
+                    <label>Intitulé du contrat</label>
+                    <input type="text" v-model="contractForm.name" required>
+                </div>
+                <div class="form-group">
+                    <label>Client</label>
+                    <select v-model="contractForm.client" required>
+                        <option value="" disabled>Sélectionner un client</option>
+                        <option v-for="c in clients" :key="c.id" :value="c.company">{{ c.company }}</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Statut</label>
+                        <select v-model="contractForm.status">
+                            <option>Actif</option>
+                            <option>En attente</option>
+                            <option>Terminé</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Mode de planification</label>
+                    <div class="toggle-buttons planning-toggle">
+                        <button type="button" class="toggle-btn"
+                            :class="{ active: contractForm.planningMode === 'auto' }"
+                            @click="contractForm.planningMode = 'auto'">Répartition automatique</button>
+                        <button type="button" class="toggle-btn"
+                            :class="{ active: contractForm.planningMode === 'manual' }"
+                            @click="contractForm.planningMode = 'manual'">Dates manuelles</button>
+                    </div>
+                </div>
+                <template v-if="contractForm.planningMode === 'auto'">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Date de début</label>
+                            <input type="date" v-model="contractForm.start" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Date de fin</label>
+                            <input type="date" v-model="contractForm.end" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Nb. d'interventions prévues</label>
+                            <input type="number" v-model="contractForm.total" min="1" required>
+                        </div>
+                        <div class="form-group form-helper">
+                            <label>Aperçu</label>
+                            <p>Le système répartira automatiquement les dates entre le début et la fin.</p>
+                        </div>
+                    </div>
+                </template>
+                <div class="form-group" v-else>
+                    <label>Dates d'intervention</label>
+                    <textarea rows="5" v-model="contractForm.manualDatesText"
+                        placeholder="Une date par ligne, ex:&#10;2026-05-03&#10;2026-06-03"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <textarea rows="2" v-model="contractForm.notes"
+                        placeholder="Précisions sur le contrat..."></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="secondary-btn" @click="closeModal()">Annuler</button>
+                    <button type="submit" class="primary-btn">{{ editingContractId ? 'Mettre à jour' :
+                        'Enregistrer' }}</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="modal modal-wide" v-if="activeModal === 'contractDetailModal' && selectedContract">
+            <div class="modal-header">
+                <div>
+                    <h3>{{ selectedContract.name }}</h3>
+                    <p class="modal-subtitle">{{ selectedContract.client }}</p>
+                </div>
+                <button class="close-modal" @click="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body contract-detail-body">
+                <div class="detail-grid">
+                    <div class="detail-card">
+                        <span>Statut</span>
+                        <strong>{{ selectedContract.status }}</strong>
+                    </div>
+                    <div class="detail-card">
+                        <span>Interventions prévues</span>
+                        <strong>{{ selectedContract.interventionDates.length }}</strong>
+                    </div>
+                    <div class="detail-card">
+                        <span>Interventions terminées</span>
+                        <strong>{{ contractCompletedCount(selectedContract) }} / {{
+                            selectedContract.interventionDates.length }}</strong>
+                    </div>
+                    <div class="detail-card">
+                        <span>Période</span>
+                        <strong>{{ selectedContract.start }} → {{ selectedContract.end }}</strong>
+                    </div>
+                </div>
+
+                <div class="schedule-block">
+                    <div class="card-header">
+                        <h4>Planning des interventions</h4>
+                    </div>
+                    <div class="schedule-list">
+                        <div class="schedule-item" v-for="item in contractInterventions(selectedContract.id)"
+                            :key="item.id">
+                            <div>
+                                <strong>{{ item.date }}</strong>
+                            </div>
+                            <span class="badge" :class="statusClass(item.status)">{{ item.status }}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="secondary-btn"
+                    @click="deleteContract(selectedContract.id)">Supprimer</button>
+                <button type="button" class="primary-btn" @click="startEditContract(selectedContract)">Modifier
+                    le contrat</button>
+            </div>
+        </div>
+
+        <!-- Modal Intervention -->
+        <div class="modal" v-show="activeModal === 'interventionModal'">
+            <div class="modal-header">
+                <h3>Planifier une Intervention</h3>
+                <button class="close-modal" @click="closeModal()">&times;</button>
+            </div>
+            <form class="modal-body" @submit.prevent="addIntervention()">
+                <div class="form-group">
+                    <label>Client</label>
+                    <select v-model="interventionForm.client" required>
+                        <option value="" disabled>Sélectionner un client</option>
+                        <option v-for="c in clients" :key="c.id" :value="c.company">{{ c.company }}</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Contrat lié (optionnel)</label>
+                    <select v-model="interventionForm.contractId">
+                        <option value="">Aucun contrat</option>
+                        <option v-for="contract in contracts" :key="contract.id" :value="contract.id">{{
+                            contract.name }} — {{ contract.client }}</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Date</label>
+                        <input type="date" v-model="interventionForm.date" required>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Priorité</label>
+                        <select v-model="interventionForm.priority">
+                            <option>Élevée</option>
+                            <option>Moyenne</option>
+                            <option>Faible</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Statut</label>
+                        <select v-model="interventionForm.status">
+                            <option v-for="status in interventionStatusOptions()" :key="status" :value="status">
+                                {{ status }}</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <textarea rows="2" v-model="interventionForm.notes"
+                        placeholder="Description ou remarques..."></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="secondary-btn" @click="closeModal()">Annuler</button>
+                    <button type="submit" class="primary-btn">Planifier</button>
+                </div>
+            </form>
+        </div>
+
+    </div><!-- /modal-overlay -->
+
+    <!-- Toast -->
+    <div class="toast" :class="{ show: toastVisible }">{{ toastMessage }}</div>
+
+    </template>
+
+    </div><!-- /app -->
+
+    <script src="script.js"></script>
+</body>
+
+</html>
