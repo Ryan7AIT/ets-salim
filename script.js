@@ -5,6 +5,7 @@ const { createApp } = Vue;
 
 const STORAGE_KEY = 'plombtrack-storage-v2';
 const AUTH_KEY = 'plombtrack-auth-v1';
+const API_BASE = window.location.protocol === 'file:' ? 'http://127.0.0.1:8000/api' : '/api';
 const INTERVENTION_STATUSES = ['Planifié', 'En cours', 'Terminé', 'Annulé'];
 const CURRENT_DATA_YEAR = 2026;
 
@@ -184,6 +185,10 @@ createApp({
             contractSearch: '',
             chartRefreshQueued: false,
             chartInstances: {},
+            apiBase: API_BASE,
+            stateLoaded: false,
+            stateApplying: false,
+            stateSaveQueued: false,
 
             loginForm: { username: '', password: '' },
             loginError: '',
@@ -315,14 +320,12 @@ createApp({
         clients: {
             deep: true,
             handler() {
-                this.persistState();
             },
         },
 
         contracts: {
             deep: true,
             handler() {
-                this.persistState();
                 if (this.isAuthenticated) this.queueChartRefresh();
             },
         },
@@ -330,7 +333,6 @@ createApp({
         interventions: {
             deep: true,
             handler() {
-                this.persistState();
                 this.syncInterventionNotifications();
                 if (this.isAuthenticated) this.queueChartRefresh();
             },
@@ -339,14 +341,15 @@ createApp({
         notifSettings: {
             deep: true,
             handler() {
+                if (this.stateApplying) return;
                 this.persistState();
                 this.syncInterventionNotifications();
             },
         },
     },
 
-    mounted() {
-        this.loadState();
+    async mounted() {
+        await this.loadState();
         this.isAuthenticated = JSON.parse(localStorage.getItem(AUTH_KEY) || 'false');
     },
 
@@ -355,9 +358,30 @@ createApp({
     },
 
     methods: {
-        loadState() {
+        async apiRequest(path, options = {}) {
+            const response = await fetch(`${this.apiBase}${path}`, {
+                headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+                ...options,
+            });
+
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.detail || 'Erreur API.');
+            }
+
+            return response.json();
+        },
+
+        async loadState() {
             const defaults = createDefaultState();
-            const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+            let stored = null;
+
+            try {
+                stored = await this.apiRequest('/state');
+            } catch (error) {
+                console.error('Unable to load API state.', error);
+                stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+            }
 
             this.notifSettings = {
                 daysBeforeIntervention: Math.max(1, Number(stored?.notifSettings?.daysBeforeIntervention) || 3),
@@ -371,17 +395,49 @@ createApp({
                 .map(intervention => this.normalizeIntervention(intervention))
                 .map(intervention => this.migrateInterventionToCurrentYear(intervention));
             this.syncInterventionNotifications();
-            this.persistState();
+            this.stateLoaded = true;
         },
 
         persistState() {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify({
+            if (!this.stateLoaded) return;
+
+            const state = {
                 clients: this.clients,
                 contracts: this.contracts,
                 interventions: this.interventions,
                 notifSettings: this.notifSettings,
                 notifReadStatus: this.notifReadStatus,
-            }));
+            };
+
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+
+            if (this.stateSaveQueued) return;
+            this.stateSaveQueued = true;
+            setTimeout(async () => {
+                this.stateSaveQueued = false;
+                try {
+                    const saved = await this.apiRequest('/state', {
+                        method: 'PUT',
+                        body: JSON.stringify(state),
+                    });
+                    this.stateApplying = true;
+                    this.clients = saved.clients.map(client => this.normalizeClient(client));
+                    this.contracts = saved.contracts.map(contract => this.normalizeContract(contract));
+                    this.interventions = saved.interventions.map(intervention => this.normalizeIntervention(intervention));
+                    this.notifSettings = {
+                        daysBeforeIntervention: Math.max(1, Number(saved?.notifSettings?.daysBeforeIntervention) || 3),
+                    };
+                    this.notifReadStatus = saved?.notifReadStatus || {};
+                    this.syncInterventionNotifications();
+                    this.$nextTick(() => {
+                        this.stateApplying = false;
+                    });
+                } catch (error) {
+                    this.stateApplying = false;
+                    console.error('Unable to save API state.', error);
+                    this.showToast('Sauvegarde serveur impossible.');
+                }
+            }, 100);
         },
 
         normalizeClient(client) {
@@ -465,13 +521,24 @@ createApp({
             };
         },
 
-        login() {
-            if (this.loginForm.username === 'admin' && this.loginForm.password === 'admin') {
+        async login() {
+            try {
+                await this.apiRequest('/login', {
+                    method: 'POST',
+                    body: JSON.stringify(this.loginForm),
+                });
                 this.isAuthenticated = true;
                 this.loginError = '';
                 this.loginForm = { username: '', password: '' };
+                await this.loadState();
                 this.showToast('Connexion réussie.');
                 return;
+            } catch (error) {
+                console.error('Unable to log in.', error);
+                if (error instanceof TypeError) {
+                    this.loginError = 'Serveur API indisponible. D\u00e9marrez FastAPI puis r\u00e9essayez.';
+                    return;
+                }
             }
 
             this.loginError = 'Identifiant ou mot de passe incorrect.';
@@ -582,6 +649,7 @@ createApp({
                 this.showToast('Client ajouté avec succès !');
             }
 
+            this.persistState();
             this.closeModal();
         },
 
@@ -601,6 +669,7 @@ createApp({
             this.clients = this.clients.filter(item => item.id !== id);
             this.contracts = this.contracts.filter(contract => contract.client !== client.company);
             this.interventions = this.interventions.filter(intervention => intervention.client !== client.company);
+            this.persistState();
             this.showToast('Client supprimé.');
         },
 
@@ -675,6 +744,7 @@ createApp({
             }
 
             this.syncContractInterventions(contract);
+            this.persistState();
             this.closeModal();
         },
 
@@ -686,6 +756,7 @@ createApp({
 
             if (this.selectedContractId === id) this.closeModal();
 
+            this.persistState();
             this.showToast('Contrat supprimé.');
         },
 
@@ -824,6 +895,7 @@ createApp({
                 this.showToast('Intervention planifiée avec succès !');
             }
 
+            this.persistState();
             this.closeModal();
         },
 
@@ -831,6 +903,7 @@ createApp({
             if (!confirm('Confirmer la suppression ?')) return;
 
             this.interventions = this.interventions.filter(intervention => intervention.id !== id);
+            this.persistState();
             this.showToast('Intervention supprimée.');
         },
 
@@ -838,6 +911,7 @@ createApp({
             const intervention = this.interventions.find(item => item.id === id);
             if (!intervention) return;
             intervention.status = status;
+            this.persistState();
         },
 
         clientContractCount(company) {
