@@ -326,6 +326,7 @@ createApp({
         contracts: {
             deep: true,
             handler() {
+                if (this.stateApplying) return;
                 if (this.isAuthenticated) this.queueChartRefresh();
             },
         },
@@ -333,6 +334,7 @@ createApp({
         interventions: {
             deep: true,
             handler() {
+                if (this.stateApplying) return;
                 this.syncInterventionNotifications();
                 if (this.isAuthenticated) this.queueChartRefresh();
             },
@@ -376,6 +378,8 @@ createApp({
             const defaults = createDefaultState();
             let stored = null;
 
+            this.stateApplying = true;
+
             try {
                 stored = await this.apiRequest('/state');
             } catch (error) {
@@ -396,6 +400,10 @@ createApp({
                 .map(intervention => this.migrateInterventionToCurrentYear(intervention));
             this.syncInterventionNotifications();
             this.stateLoaded = true;
+
+            this.$nextTick(() => {
+                this.stateApplying = false;
+            });
         },
 
         persistState() {
@@ -527,10 +535,10 @@ createApp({
                     method: 'POST',
                     body: JSON.stringify(this.loginForm),
                 });
+                await this.loadState();
                 this.isAuthenticated = true;
                 this.loginError = '';
                 this.loginForm = { username: '', password: '' };
-                await this.loadState();
                 this.showToast('Connexion réussie.');
                 return;
             } catch (error) {
