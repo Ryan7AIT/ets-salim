@@ -4,3 +4,10 @@ sessions/
 api/__pycache__/
 api/.pytest_cache/
 api/*.sqlite3
+__pycache__/
+*.py[cod]
+*.sqlite3
+.venv/
+.env
+.pytest_cache/
+sessions/
