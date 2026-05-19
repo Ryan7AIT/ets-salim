@@ -1,3 +1,6 @@
 api/.venv
 .env
 sessions/
+api/__pycache__/
+api/.pytest_cache/
+api/*.sqlite3
