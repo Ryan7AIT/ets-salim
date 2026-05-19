@@ -280,7 +280,7 @@
                                             :style="{ width: contractCompletionPercent(c) + '%' }"></div>
                                     </div>
                                     <div style="display:flex;justify-content:space-between;font-size:0.8rem">
-                                        <span>{{ contractCompletedCount(c) }} / {{ c.interventionDates.length }}
+                                        <span>{{ contractCompletedCount(c) }} / {{ contractInterventionTotal(c) }}
                                             Interventions</span>
                                         <span>{{ contractCompletionPercent(c) }}%</span>
                                     </div>
@@ -310,11 +310,38 @@
                         </div>
 
                         <div class="card" v-show="interventionView === 'list'">
+                            <div class="table-controls intervention-filters">
+                                <div class="intervention-filters-fields">
+                                    <div class="form-group filter-field">
+                                        <label>Type</label>
+                                        <select v-model="interventionFilterType">
+                                            <option value="">Tous les types</option>
+                                            <option v-for="option in interventionTypeOptions()" :key="option.value"
+                                                :value="option.value">{{ option.label }}</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group filter-field">
+                                        <label>Du</label>
+                                        <input type="date" v-model="interventionFilterStart">
+                                    </div>
+                                    <div class="form-group filter-field">
+                                        <label>Au</label>
+                                        <input type="date" v-model="interventionFilterEnd">
+                                    </div>
+                                </div>
+                                <p class="filter-summary">
+                                    {{ filteredInterventions.length }} résultat(s)
+                                    <span v-if="filteredInterventions.length">
+                                        — affichage {{ interventionPaginationFrom }}-{{ interventionPaginationTo }}
+                                    </span>
+                                </p>
+                            </div>
                             <div class="table-responsive">
                                 <table>
                                     <thead>
                                         <tr>
                                             <th>ID</th>
+                                            <th>Type</th>
                                             <th>Client</th>
                                             <th>Date</th>
                                             <th>Priorité</th>
@@ -323,8 +350,9 @@
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        <tr v-for="i in interventions" :key="i.id">
+                                        <tr v-for="i in paginatedInterventions" :key="i.id">
                                             <td>#{{ i.id }}</td>
+                                            <td>{{ interventionTypeLabel(i.type) }}</td>
                                             <td>{{ i.client }}</td>
                                             <td>{{ i.date }}</td>
                                             <td><span :style="{ color: priorityColor(i.priority) }">{{ i.priority
@@ -348,8 +376,25 @@
                                                 </button>
                                             </td>
                                         </tr>
+                                        <tr v-if="paginatedInterventions.length === 0">
+                                            <td colspan="7"
+                                                style="text-align:center;color:var(--text-muted);padding:32px">
+                                                Aucune intervention pour ces filtres.</td>
+                                        </tr>
                                     </tbody>
                                 </table>
+                            </div>
+                            <div class="pagination-bar" v-if="filteredInterventions.length">
+                                <button type="button" class="secondary-btn" :disabled="interventionPage <= 1"
+                                    @click="setInterventionPage(interventionPage - 1)">
+                                    Précédent
+                                </button>
+                                <span class="pagination-info">Page {{ interventionPage }} / {{ interventionTotalPages }}</span>
+                                <button type="button" class="secondary-btn"
+                                    :disabled="interventionPage >= interventionTotalPages"
+                                    @click="setInterventionPage(interventionPage + 1)">
+                                    Suivant
+                                </button>
                             </div>
                         </div>
 
@@ -391,11 +436,16 @@
                         <div style="padding:24px">
                             <div class="form-group">
                                 <label>Notifier avant l'intervention (jours)</label>
-                                <input type="number" min="1" max="60" style="max-width:120px"
-                                    v-model.number="notifSettings.daysBeforeIntervention">
+                                <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                                    <input type="number" min="1" max="60" style="max-width:120px"
+                                        v-model="notifDaysDraft" @keydown.enter.prevent="saveNotifSettings()">
+                                    <button type="button" class="primary-btn" @click="saveNotifSettings()">
+                                        Enregistrer
+                                    </button>
+                                </div>
                                 <p style="color:var(--text-muted);font-size:0.85rem;margin-top:8px">
                                     Une notification apparaîtra automatiquement X jours avant chaque intervention
-                                    planifiée ou en cours.
+                                    planifiée ou en cours (entre 1 et 60 jours).
                                 </p>
                             </div>
                         </div>
@@ -446,12 +496,12 @@
         </div>
 
         <!-- Modal Contrat -->
-        <div class="modal" v-show="activeModal === 'contractModal'">
+        <div class="modal modal-wide" v-show="activeModal === 'contractModal'">
             <div class="modal-header">
                 <h3>{{ editingContractId ? 'Modifier le Contrat' : 'Créer un Contrat' }}</h3>
                 <button class="close-modal" @click="closeModal()">&times;</button>
             </div>
-            <form class="modal-body" @submit.prevent="submitContract()">
+            <form class="modal-body contract-form-body" @submit.prevent="submitContract()">
                 <div class="form-group">
                     <label>Intitulé du contrat</label>
                     <input type="text" v-model="contractForm.name" required>
@@ -473,44 +523,73 @@
                         </select>
                     </div>
                 </div>
-                <div class="form-group">
-                    <label>Mode de planification</label>
-                    <div class="toggle-buttons planning-toggle">
-                        <button type="button" class="toggle-btn"
-                            :class="{ active: contractForm.planningMode === 'auto' }"
-                            @click="contractForm.planningMode = 'auto'">Répartition automatique</button>
-                        <button type="button" class="toggle-btn"
-                            :class="{ active: contractForm.planningMode === 'manual' }"
-                            @click="contractForm.planningMode = 'manual'">Dates manuelles</button>
+                <div class="form-row contract-period-row">
+                    <div class="form-group">
+                        <label>Période du contrat — début</label>
+                        <input type="date" v-model="contractForm.start" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Période du contrat — fin</label>
+                        <input type="date" v-model="contractForm.end" required>
                     </div>
                 </div>
-                <template v-if="contractForm.planningMode === 'auto'">
-                    <div class="form-row">
+
+                <div class="contract-planning-grid">
+                    <section class="planning-column">
+                        <h4 class="planning-column-title"><i class="fas fa-fire"></i> Chaudière</h4>
                         <div class="form-group">
-                            <label>Date de début</label>
-                            <input type="date" v-model="contractForm.start" required>
+                            <label>Mode de planification</label>
+                            <div class="toggle-buttons planning-toggle">
+                                <button type="button" class="toggle-btn"
+                                    :class="{ active: contractForm.chaudierePlanningMode === 'auto' }"
+                                    @click="contractForm.chaudierePlanningMode = 'auto'">Automatique</button>
+                                <button type="button" class="toggle-btn"
+                                    :class="{ active: contractForm.chaudierePlanningMode === 'manual' }"
+                                    @click="contractForm.chaudierePlanningMode = 'manual'">Manuel</button>
+                            </div>
                         </div>
+                        <template v-if="contractForm.chaudierePlanningMode === 'auto'">
+                            <div class="form-group">
+                                <label>Nombre d'interventions</label>
+                                <input type="number" v-model="contractForm.chaudiereTotal" min="0" required>
+                            </div>
+                            <p class="planning-hint">Dates réparties entre le début et la fin du contrat.</p>
+                        </template>
+                        <div class="form-group" v-else>
+                            <label>Dates (une par ligne)</label>
+                            <textarea rows="5" v-model="contractForm.chaudiereManualDatesText"
+                                placeholder="2026-05-03&#10;2026-08-03"></textarea>
+                        </div>
+                    </section>
+
+                    <section class="planning-column">
+                        <h4 class="planning-column-title"><i class="fas fa-burn"></i> Brûleur</h4>
                         <div class="form-group">
-                            <label>Date de fin</label>
-                            <input type="date" v-model="contractForm.end" required>
+                            <label>Mode de planification</label>
+                            <div class="toggle-buttons planning-toggle">
+                                <button type="button" class="toggle-btn"
+                                    :class="{ active: contractForm.bruleurPlanningMode === 'auto' }"
+                                    @click="contractForm.bruleurPlanningMode = 'auto'">Automatique</button>
+                                <button type="button" class="toggle-btn"
+                                    :class="{ active: contractForm.bruleurPlanningMode === 'manual' }"
+                                    @click="contractForm.bruleurPlanningMode = 'manual'">Manuel</button>
+                            </div>
                         </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Nb. d'interventions prévues</label>
-                            <input type="number" v-model="contractForm.total" min="1" required>
+                        <template v-if="contractForm.bruleurPlanningMode === 'auto'">
+                            <div class="form-group">
+                                <label>Nombre d'interventions</label>
+                                <input type="number" v-model="contractForm.bruleurTotal" min="0" required>
+                            </div>
+                            <p class="planning-hint">Dates réparties entre le début et la fin du contrat.</p>
+                        </template>
+                        <div class="form-group" v-else>
+                            <label>Dates (une par ligne)</label>
+                            <textarea rows="5" v-model="contractForm.bruleurManualDatesText"
+                                placeholder="2026-04-10&#10;2026-07-10"></textarea>
                         </div>
-                        <div class="form-group form-helper">
-                            <label>Aperçu</label>
-                            <p>Le système répartira automatiquement les dates entre le début et la fin.</p>
-                        </div>
-                    </div>
-                </template>
-                <div class="form-group" v-else>
-                    <label>Dates d'intervention</label>
-                    <textarea rows="5" v-model="contractForm.manualDatesText"
-                        placeholder="Une date par ligne, ex:&#10;2026-05-03&#10;2026-06-03"></textarea>
+                    </section>
                 </div>
+
                 <div class="form-group">
                     <label>Notes</label>
                     <textarea rows="2" v-model="contractForm.notes"
@@ -540,12 +619,17 @@
                     </div>
                     <div class="detail-card">
                         <span>Interventions prévues</span>
-                        <strong>{{ selectedContract.interventionDates.length }}</strong>
+                        <strong>{{ contractInterventionTotal(selectedContract) }}</strong>
+                    </div>
+                    <div class="detail-card">
+                        <span>Chaudière / Brûleur</span>
+                        <strong>{{ (selectedContract.chaudiereDates || []).length }} / {{
+                            (selectedContract.bruleurDates || []).length }}</strong>
                     </div>
                     <div class="detail-card">
                         <span>Interventions terminées</span>
                         <strong>{{ contractCompletedCount(selectedContract) }} / {{
-                            selectedContract.interventionDates.length }}</strong>
+                            contractInterventionTotal(selectedContract) }}</strong>
                     </div>
                     <div class="detail-card">
                         <span>Période</span>
@@ -553,18 +637,24 @@
                     </div>
                 </div>
 
-                <div class="schedule-block">
-                    <div class="card-header">
-                        <h4>Planning des interventions</h4>
-                    </div>
+<div class="schedule-block">
+                    <div class="card-header"><h4>Planning — Chaudière</h4></div>
                     <div class="schedule-list">
-                        <div class="schedule-item" v-for="item in contractInterventions(selectedContract.id)"
-                            :key="item.id">
-                            <div>
-                                <strong>{{ item.date }}</strong>
-                            </div>
+                        <div class="schedule-item" v-for="item in contractInterventionsByType(selectedContract.id, 'chaudiere')" :key="item.id">
+                            <div><strong>{{ item.date }}</strong><p>#{{ item.id }}</p></div>
                             <span class="badge" :class="statusClass(item.status)">{{ item.status }}</span>
                         </div>
+                        <p v-if="!contractInterventionsByType(selectedContract.id, 'chaudiere').length" class="planning-hint">Aucune intervention chaudière planifiée.</p>
+                    </div>
+                </div>
+                <div class="schedule-block">
+                    <div class="card-header"><h4>Planning — Brûleur</h4></div>
+                    <div class="schedule-list">
+                        <div class="schedule-item" v-for="item in contractInterventionsByType(selectedContract.id, 'bruleur')" :key="item.id">
+                            <div><strong>{{ item.date }}</strong><p>#{{ item.id }}</p></div>
+                            <span class="badge" :class="statusClass(item.status)">{{ item.status }}</span>
+                        </div>
+                        <p v-if="!contractInterventionsByType(selectedContract.id, 'bruleur').length" class="planning-hint">Aucune intervention brûleur planifiée.</p>
                     </div>
                 </div>
             </div>
@@ -606,6 +696,17 @@
                     </p>
                 </div>
                 <div class="form-row">
+                    <div class="form-group">
+                        <label>Type d'intervention</label>
+                        <select v-model="interventionForm.type" :disabled="!interventionTypeEditable" required>
+                            <option v-for="option in interventionTypeOptions()" :key="option.value"
+                                :value="option.value">{{ option.label }}</option>
+                        </select>
+                        <p v-if="!interventionTypeEditable"
+                            style="color:var(--text-muted);font-size:0.82rem;margin-top:8px">
+                            Le type est défini par le contrat lié.
+                        </p>
+                    </div>
                     <div class="form-group">
                         <label>Date</label>
                         <input type="date" v-model="interventionForm.date" required>

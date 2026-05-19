@@ -93,23 +93,73 @@ def create_default_contracts() -> list[dict[str, Any]]:
     ]
 
 
+def parse_contract_schedules(raw: Any) -> dict[str, list[str]]:
+    if isinstance(raw, dict):
+        return {
+            "chaudiereDates": unique_sorted_dates(list(raw.get("chaudiereDates") or raw.get("chaudiere") or [])),
+            "bruleurDates": unique_sorted_dates(list(raw.get("bruleurDates") or raw.get("bruleur") or [])),
+        }
+    if isinstance(raw, list):
+        return {"chaudiereDates": unique_sorted_dates(raw), "bruleurDates": []}
+    return {"chaudiereDates": [], "bruleurDates": []}
+
+
+def serialize_contract_schedules(contract: dict[str, Any]) -> str:
+    schedules = parse_contract_schedules(
+        {
+            "chaudiereDates": contract.get("chaudiereDates"),
+            "bruleurDates": contract.get("bruleurDates"),
+        }
+        if contract.get("chaudiereDates") is not None or contract.get("bruleurDates") is not None
+        else contract.get("interventionDates", [])
+    )
+    return json.dumps(schedules)
+
+
+def contract_total_interventions(contract: dict[str, Any]) -> int:
+    schedules = parse_contract_schedules(
+        {
+            "chaudiereDates": contract.get("chaudiereDates"),
+            "bruleurDates": contract.get("bruleurDates"),
+        }
+        if contract.get("chaudiereDates") is not None or contract.get("bruleurDates") is not None
+        else contract.get("interventionDates", [])
+    )
+    return len(schedules["chaudiereDates"]) + len(schedules["bruleurDates"])
+
+
 def create_default_interventions(contracts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     priorities = ["Moyenne", "\u00c9lev\u00e9e", "Faible"]
     items: list[dict[str, Any]] = []
+    sequence = 1
     for contract in contracts:
-        for index, date_value in enumerate(contract["interventionDates"]):
-            items.append(
-                {
-                    "id": f"INT-{contract['id']}{str(index + 1).zfill(2)}",
-                    "client": contract["client"],
-                    "contractId": contract["id"],
-                    "date": date_value,
-                    "priority": priorities[index % 3],
-                    "status": default_intervention_status(date_value),
-                    "notes": "",
-                    "source": "contract",
-                }
-            )
+        schedules = parse_contract_schedules(
+            {
+                "chaudiereDates": contract.get("chaudiereDates"),
+                "bruleurDates": contract.get("bruleurDates"),
+            }
+            if contract.get("chaudiereDates") is not None or contract.get("bruleurDates") is not None
+            else contract.get("interventionDates", [])
+        )
+        for intervention_type, dates in (
+            ("chaudiere", schedules["chaudiereDates"]),
+            ("bruleur", schedules["bruleurDates"]),
+        ):
+            for index, date_value in enumerate(dates):
+                items.append(
+                    {
+                        "id": f"INT-{sequence}",
+                        "client": contract["client"],
+                        "contractId": contract["id"],
+                        "type": intervention_type,
+                        "date": date_value,
+                        "priority": priorities[index % 3],
+                        "status": default_intervention_status(date_value),
+                        "notes": "",
+                        "source": "contract",
+                    }
+                )
+                sequence += 1
     return items
 
 
@@ -141,13 +191,18 @@ def read_state_from_conn(conn: sqlite3.Connection) -> dict[str, Any]:
     for row in conn.execute("SELECT * FROM contracts ORDER BY id"):
         item = dict(row)
         item["planningMode"] = item.pop("planning_mode")
-        item["interventionDates"] = json.loads(item.pop("intervention_dates") or "[]")
+        schedules = parse_contract_schedules(json.loads(item.pop("intervention_dates") or "[]"))
+        item["chaudiereDates"] = schedules["chaudiereDates"]
+        item["bruleurDates"] = schedules["bruleurDates"]
+        item["chaudierePlanningMode"] = item.pop("chaudiere_planning_mode", None) or item["planningMode"]
+        item["bruleurPlanningMode"] = item.pop("bruleur_planning_mode", None) or item["planningMode"]
         contracts.append(item)
 
     interventions = []
     for row in conn.execute("SELECT * FROM interventions ORDER BY date, id"):
         item = dict(row)
         item["contractId"] = item.pop("contract_id")
+        item["type"] = item.get("type")
         interventions.append(item)
 
     return {
@@ -186,6 +241,8 @@ def init_db() -> None:
                 total INTEGER DEFAULT 1,
                 status TEXT DEFAULT 'Actif',
                 planning_mode TEXT DEFAULT 'auto',
+                chaudiere_planning_mode TEXT DEFAULT 'auto',
+                bruleur_planning_mode TEXT DEFAULT 'auto',
                 intervention_dates TEXT NOT NULL DEFAULT '[]',
                 notes TEXT DEFAULT ''
             );
@@ -193,6 +250,7 @@ def init_db() -> None:
                 id TEXT PRIMARY KEY,
                 client TEXT NOT NULL,
                 contract_id INTEGER,
+                type TEXT,
                 date TEXT NOT NULL,
                 priority TEXT DEFAULT 'Moyenne',
                 status TEXT DEFAULT 'Planifié',
@@ -215,6 +273,16 @@ def init_db() -> None:
 
         if conn.execute("SELECT COUNT(*) FROM clients").fetchone()[0] == 0:
             replace_state(conn, default_state())
+
+        contract_columns = {row[1] for row in conn.execute("PRAGMA table_info(contracts)")}
+        if "chaudiere_planning_mode" not in contract_columns:
+            conn.execute("ALTER TABLE contracts ADD COLUMN chaudiere_planning_mode TEXT DEFAULT 'auto'")
+        if "bruleur_planning_mode" not in contract_columns:
+            conn.execute("ALTER TABLE contracts ADD COLUMN bruleur_planning_mode TEXT DEFAULT 'auto'")
+
+        intervention_columns = {row[1] for row in conn.execute("PRAGMA table_info(interventions)")}
+        if "type" not in intervention_columns:
+            conn.execute("ALTER TABLE interventions ADD COLUMN type TEXT")
 
 
 def read_state() -> dict[str, Any]:
@@ -244,8 +312,8 @@ def replace_state(conn: sqlite3.Connection, state: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO contracts
-            (id, name, client, start, end, total, status, planning_mode, intervention_dates, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, name, client, start, end, total, status, planning_mode, chaudiere_planning_mode, bruleur_planning_mode, intervention_dates, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 contract["id"],
@@ -253,10 +321,12 @@ def replace_state(conn: sqlite3.Connection, state: dict[str, Any]) -> None:
                 contract.get("client", ""),
                 contract.get("start", ""),
                 contract.get("end", ""),
-                int(contract.get("total") or len(contract.get("interventionDates", [])) or 1),
+                int(contract.get("total") or contract_total_interventions(contract) or 1),
                 contract.get("status", "Actif"),
                 contract.get("planningMode", "auto"),
-                json.dumps(contract.get("interventionDates", [])),
+                contract.get("chaudierePlanningMode", contract.get("planningMode", "auto")),
+                contract.get("bruleurPlanningMode", contract.get("planningMode", "auto")),
+                serialize_contract_schedules(contract),
                 contract.get("notes", ""),
             ),
         )
@@ -265,13 +335,14 @@ def replace_state(conn: sqlite3.Connection, state: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO interventions
-            (id, client, contract_id, date, priority, status, notes, source)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (id, client, contract_id, type, date, priority, status, notes, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 intervention["id"],
                 intervention.get("client", ""),
                 intervention.get("contractId"),
+                intervention.get("type"),
                 intervention.get("date", ""),
                 intervention.get("priority", "Moyenne"),
                 intervention.get("status", "Planifi\u00e9"),
