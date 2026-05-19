@@ -7,7 +7,67 @@ const STORAGE_KEY = 'plombtrack-storage-v2';
 const AUTH_KEY = 'plombtrack-auth-v1';
 const API_BASE = window.location.protocol === 'file:' ? 'http://127.0.0.1:8000/api' : '/api';
 const INTERVENTION_STATUSES = ['Planifié', 'En cours', 'Terminé', 'Annulé'];
+const INTERVENTION_TYPES = { CHAUDIERE: 'chaudiere', BRULEUR: 'bruleur' };
 const CURRENT_DATA_YEAR = 2026;
+
+function parseInterventionSequence(id) {
+    if (typeof id !== 'string') return 0;
+    const match = id.trim().match(/^INT-(\d+)$/i);
+    return match ? Number(match[1]) : 0;
+}
+
+function formatInterventionId(sequence) {
+    return `INT-${sequence}`;
+}
+
+function nextInterventionSequence(interventions) {
+    const max = (Array.isArray(interventions) ? interventions : [])
+        .reduce((highest, item) => Math.max(highest, parseInterventionSequence(item.id)), 0);
+    return max + 1;
+}
+
+function allocateInterventionId(interventions) {
+    return formatInterventionId(nextInterventionSequence(interventions));
+}
+
+function parseContractSchedules(raw) {
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        return {
+            chaudiereDates: uniqueSortedDates(raw.chaudiereDates || raw.chaudiere || []),
+            bruleurDates: uniqueSortedDates(raw.bruleurDates || raw.bruleur || []),
+        };
+    }
+
+    const legacyDates = uniqueSortedDates(Array.isArray(raw) ? raw : []);
+    return {
+        chaudiereDates: legacyDates,
+        bruleurDates: [],
+    };
+}
+
+function contractAllDates(contract) {
+    return uniqueSortedDates([
+        ...(contract.chaudiereDates || []),
+        ...(contract.bruleurDates || []),
+    ]);
+}
+
+function contractTotalInterventions(contract) {
+    return (contract.chaudiereDates?.length || 0) + (contract.bruleurDates?.length || 0);
+}
+
+function interventionTypeLabel(type) {
+    if (type === INTERVENTION_TYPES.BRULEUR) return 'Brûleur';
+    if (type === INTERVENTION_TYPES.CHAUDIERE) return 'Chaudière';
+    return '—';
+}
+
+function defaultInterventionFilterRange(year = new Date().getFullYear()) {
+    return {
+        start: `${year}-01-01`,
+        end: `${year}-12-31`,
+    };
+}
 
 function formatDateInput(value) {
     if (!value) return '';
@@ -112,7 +172,8 @@ function createDefaultContracts() {
             total: 6,
             status: 'Actif',
             planningMode: 'auto',
-            interventionDates: generateAutomaticDates('2026-01-10', '2026-12-10', 6),
+            chaudiereDates: generateAutomaticDates('2026-01-10', '2026-12-10', 4),
+            bruleurDates: generateAutomaticDates('2026-01-10', '2026-12-10', 2),
             notes: 'Maintenance préventive annuelle.',
         },
         {
@@ -124,7 +185,8 @@ function createDefaultContracts() {
             total: 8,
             status: 'Actif',
             planningMode: 'auto',
-            interventionDates: generateAutomaticDates('2026-03-01', '2026-12-01', 8),
+            chaudiereDates: generateAutomaticDates('2026-03-01', '2026-12-01', 3),
+            bruleurDates: generateAutomaticDates('2026-03-01', '2026-12-01', 5),
             notes: 'Passages planifiés et astreinte.',
         },
         {
@@ -136,25 +198,38 @@ function createDefaultContracts() {
             total: 4,
             status: 'En attente',
             planningMode: 'manual',
-            interventionDates: ['2026-04-15', '2026-05-15', '2026-06-15', '2026-07-15'],
+            chaudiereDates: ['2026-04-15', '2026-06-15'],
+            bruleurDates: ['2026-05-15', '2026-07-15'],
             notes: 'Dates imposées par le syndic.',
         },
     ];
 }
 
 function createDefaultInterventions(contracts) {
-    const items = contracts.flatMap(contract =>
-        contract.interventionDates.map((date, index) => ({
-            id: `INT-${contract.id}${String(index + 1).padStart(2, '0')}`,
-            client: contract.client,
-            contractId: contract.id,
-            date,
-            priority: ['Moyenne', 'Élevée', 'Faible'][index % 3],
-            status: defaultInterventionStatus(date),
-            notes: '',
-            source: 'contract',
-        }))
-    );
+    const items = [];
+    let sequence = 1;
+
+    contracts.forEach(contract => {
+        [
+            { type: INTERVENTION_TYPES.CHAUDIERE, dates: contract.chaudiereDates || [] },
+            { type: INTERVENTION_TYPES.BRULEUR, dates: contract.bruleurDates || [] },
+        ].forEach(({ type, dates }) => {
+            dates.forEach((date, index) => {
+                items.push({
+                    id: formatInterventionId(sequence),
+                    client: contract.client,
+                    contractId: contract.id,
+                    type,
+                    date,
+                    priority: ['Moyenne', 'Élevée', 'Faible'][index % 3],
+                    status: defaultInterventionStatus(date),
+                    notes: '',
+                    source: 'contract',
+                });
+                sequence += 1;
+            });
+        });
+    });
 
     return items;
 }
@@ -181,6 +256,11 @@ createApp({
             toastVisible: false,
             notificationsOpen: false,
             interventionView: 'list',
+            interventionFilterType: '',
+            interventionFilterStart: defaultInterventionFilterRange().start,
+            interventionFilterEnd: defaultInterventionFilterRange().end,
+            interventionPage: 1,
+            interventionPageSize: 10,
             clientSearch: '',
             contractSearch: '',
             chartRefreshQueued: false,
@@ -195,6 +275,7 @@ createApp({
 
             notifications: [],
             notifSettings: { daysBeforeIntervention: 3 },
+            notifDaysDraft: '3',
             notifReadStatus: {},
             clients: [],
             contracts: [],
@@ -211,15 +292,19 @@ createApp({
                 client: '',
                 start: '',
                 end: '',
-                total: 1,
                 status: 'Actif',
-                planningMode: 'auto',
-                manualDatesText: '',
                 notes: '',
+                chaudierePlanningMode: 'auto',
+                chaudiereTotal: 1,
+                chaudiereManualDatesText: '',
+                bruleurPlanningMode: 'auto',
+                bruleurTotal: 1,
+                bruleurManualDatesText: '',
             },
             interventionForm: {
                 client: '',
                 contractId: '',
+                type: INTERVENTION_TYPES.CHAUDIERE,
                 date: '',
                 priority: 'Moyenne',
                 status: 'Planifié',
@@ -253,6 +338,55 @@ createApp({
             return this.contracts.filter(contract =>
                 contract.name.toLowerCase().includes(q) || contract.client.toLowerCase().includes(q)
             );
+        },
+
+        filteredInterventions() {
+            let items = [...this.interventions];
+
+            if (this.interventionFilterType) {
+                items = items.filter(intervention =>
+                    (intervention.type || INTERVENTION_TYPES.CHAUDIERE) === this.interventionFilterType
+                );
+            }
+
+            if (this.interventionFilterStart) {
+                items = items.filter(intervention => intervention.date >= this.interventionFilterStart);
+            }
+
+            if (this.interventionFilterEnd) {
+                items = items.filter(intervention => intervention.date <= this.interventionFilterEnd);
+            }
+
+            return items.sort((left, right) => new Date(left.date) - new Date(right.date));
+        },
+
+        interventionTotalPages() {
+            return Math.max(1, Math.ceil(this.filteredInterventions.length / this.interventionPageSize));
+        },
+
+        paginatedInterventions() {
+            const page = Math.min(Math.max(1, this.interventionPage), this.interventionTotalPages);
+            const offset = (page - 1) * this.interventionPageSize;
+            return this.filteredInterventions.slice(offset, offset + this.interventionPageSize);
+        },
+
+        interventionPaginationFrom() {
+            if (!this.filteredInterventions.length) return 0;
+            return (Math.min(this.interventionPage, this.interventionTotalPages) - 1) * this.interventionPageSize + 1;
+        },
+
+        interventionPaginationTo() {
+            if (!this.filteredInterventions.length) return 0;
+            return Math.min(
+                this.interventionPaginationFrom + this.interventionPageSize - 1,
+                this.filteredInterventions.length
+            );
+        },
+
+        interventionTypeEditable() {
+            if (!this.editingInterventionId) return true;
+            const existing = this.interventions.find(item => item.id === this.editingInterventionId);
+            return !existing?.contractId || existing?.source !== 'contract';
         },
 
         unreadNotificationsCount() {
@@ -338,14 +472,22 @@ createApp({
             },
         },
 
-        notifSettings: {
-            deep: true,
-            handler() {
-                if (this.stateApplying) return;
-                this.persistState();
-                this.syncInterventionNotifications();
-            },
+        interventionFilterType() {
+            this.interventionPage = 1;
         },
+
+        interventionFilterStart() {
+            this.interventionPage = 1;
+        },
+
+        interventionFilterEnd() {
+            this.interventionPage = 1;
+        },
+
+        interventionTotalPages(total) {
+            if (this.interventionPage > total) this.interventionPage = total;
+        },
+
     },
 
     async mounted() {
@@ -386,6 +528,7 @@ createApp({
             this.notifSettings = {
                 daysBeforeIntervention: Math.max(1, Number(stored?.notifSettings?.daysBeforeIntervention) || 3),
             };
+            this.notifDaysDraft = String(this.notifSettings.daysBeforeIntervention);
             this.notifReadStatus = stored?.notifReadStatus || {};
             this.clients = Array.isArray(stored?.clients) ? stored.clients.map(client => this.normalizeClient(client)) : defaults.clients;
             this.contracts = (Array.isArray(stored?.contracts) ? stored.contracts : defaults.contracts)
@@ -394,6 +537,8 @@ createApp({
             this.interventions = (Array.isArray(stored?.interventions) ? stored.interventions : defaults.interventions)
                 .map(intervention => this.normalizeIntervention(intervention))
                 .map(intervention => this.migrateInterventionToCurrentYear(intervention));
+            this.migrateInterventionTypes();
+            this.renumberInterventionIds();
             this.syncInterventionNotifications();
             this.stateLoaded = true;
         },
@@ -427,6 +572,9 @@ createApp({
                     this.notifSettings = {
                         daysBeforeIntervention: Math.max(1, Number(saved?.notifSettings?.daysBeforeIntervention) || 3),
                     };
+                    if (this.currentPage !== 'parametres') {
+                        this.notifDaysDraft = String(this.notifSettings.daysBeforeIntervention);
+                    }
                     this.notifReadStatus = saved?.notifReadStatus || {};
                     this.syncInterventionNotifications();
                     this.$nextTick(() => {
@@ -452,49 +600,110 @@ createApp({
         },
 
         normalizeContract(contract) {
-            const dates = Array.isArray(contract.interventionDates) && contract.interventionDates.length
-                ? uniqueSortedDates(contract.interventionDates)
-                : generateAutomaticDates(contract.start, contract.end, contract.total || 1);
+            const schedules = parseContractSchedules(
+                contract.chaudiereDates || contract.bruleurDates
+                    ? { chaudiereDates: contract.chaudiereDates, bruleurDates: contract.bruleurDates }
+                    : contract.interventionDates
+            );
+
+            let chaudiereDates = schedules.chaudiereDates;
+            let bruleurDates = schedules.bruleurDates;
+
+            if (!chaudiereDates.length && !bruleurDates.length) {
+                chaudiereDates = generateAutomaticDates(contract.start, contract.end, contract.total || 1);
+            }
+
+            const allDates = contractAllDates({ chaudiereDates, bruleurDates });
 
             return {
                 id: contract.id,
                 name: contract.name || '',
                 client: contract.client || '',
-                start: contract.start || dates[0] || '',
-                end: contract.end || dates[dates.length - 1] || '',
-                total: dates.length || Number(contract.total) || 1,
+                start: contract.start || allDates[0] || '',
+                end: contract.end || allDates[allDates.length - 1] || '',
+                total: contractTotalInterventions({ chaudiereDates, bruleurDates }),
                 status: contract.status || 'Actif',
                 planningMode: contract.planningMode || 'auto',
-                interventionDates: dates,
+                chaudierePlanningMode: contract.chaudierePlanningMode || contract.planningMode || 'auto',
+                bruleurPlanningMode: contract.bruleurPlanningMode || contract.planningMode || 'auto',
+                chaudiereDates,
+                bruleurDates,
                 notes: contract.notes || '',
             };
         },
 
         migrateContractToCurrentYear(contract) {
-            const interventionDates = moveDatesToYear(contract.interventionDates);
-            const start = moveDateToYear(contract.start || interventionDates[0]) || interventionDates[0] || '';
-            const end = moveDateToYear(contract.end || interventionDates[interventionDates.length - 1]) || interventionDates[interventionDates.length - 1] || '';
+            const chaudiereDates = moveDatesToYear(contract.chaudiereDates);
+            const bruleurDates = moveDatesToYear(contract.bruleurDates);
+            const allDates = contractAllDates({ chaudiereDates, bruleurDates });
+            const start = moveDateToYear(contract.start || allDates[0]) || allDates[0] || '';
+            const end = moveDateToYear(contract.end || allDates[allDates.length - 1]) || allDates[allDates.length - 1] || '';
 
             return {
                 ...contract,
                 start,
                 end,
-                total: interventionDates.length || Number(contract.total) || 1,
-                interventionDates,
+                total: contractTotalInterventions({ chaudiereDates, bruleurDates }),
+                chaudiereDates,
+                bruleurDates,
             };
         },
 
         normalizeIntervention(intervention) {
+            const sequence = parseInterventionSequence(intervention.id);
+            const id = sequence > 0 ? formatInterventionId(sequence) : intervention.id;
+
             return {
-                id: intervention.id,
+                id,
                 client: intervention.client || '',
                 contractId: intervention.contractId ?? null,
+                type: intervention.type || null,
                 date: intervention.date || '',
                 priority: intervention.priority || 'Moyenne',
                 status: intervention.status || 'Planifié',
                 notes: intervention.notes || '',
                 source: intervention.source || null,
             };
+        },
+
+        migrateInterventionTypes() {
+            this.interventions = this.interventions.map(intervention => {
+                if (intervention.type || !intervention.contractId) return intervention;
+
+                const contract = this.contracts.find(item => item.id === intervention.contractId);
+                if (!contract) return intervention;
+
+                if ((contract.bruleurDates || []).includes(intervention.date)) {
+                    return { ...intervention, type: INTERVENTION_TYPES.BRULEUR };
+                }
+
+                return { ...intervention, type: INTERVENTION_TYPES.CHAUDIERE };
+            });
+        },
+
+        renumberInterventionIds() {
+            const sorted = [...this.interventions].sort((left, right) => {
+                const leftSeq = parseInterventionSequence(left.id);
+                const rightSeq = parseInterventionSequence(right.id);
+                if (leftSeq && rightSeq && leftSeq !== rightSeq) return leftSeq - rightSeq;
+                return new Date(left.date) - new Date(right.date);
+            });
+
+            const idMap = new Map();
+            sorted.forEach((intervention, index) => {
+                const nextId = formatInterventionId(index + 1);
+                if (intervention.id !== nextId) idMap.set(intervention.id, nextId);
+            });
+
+            if (!idMap.size) return;
+
+            this.interventions = this.interventions.map(intervention => (
+                idMap.has(intervention.id) ? { ...intervention, id: idMap.get(intervention.id) } : intervention
+            ));
+
+            this.notifReadStatus = Object.fromEntries(
+                Object.entries(this.notifReadStatus).map(([id, read]) => [idMap.get(id) || id, read])
+            );
         },
 
         migrateInterventionToCurrentYear(intervention) {
@@ -557,6 +766,32 @@ createApp({
             this.currentPage = page;
             this.notificationsOpen = false;
             if (window.innerWidth <= 768) this.sidebarOpen = false;
+            if (page === 'parametres') {
+                this.notifDaysDraft = String(this.notifSettings.daysBeforeIntervention);
+            }
+            if (page === 'interventions') {
+                this.interventionPage = 1;
+            }
+        },
+
+        setInterventionPage(page) {
+            const next = Math.min(Math.max(1, page), this.interventionTotalPages);
+            this.interventionPage = next;
+        },
+
+        saveNotifSettings() {
+            const raw = String(this.notifDaysDraft).trim();
+            const parsed = Number(raw);
+            if (raw === '' || !Number.isFinite(parsed)) {
+                this.showToast('Veuillez entrer un nombre de jours valide.');
+                return;
+            }
+            const days = Math.min(60, Math.max(1, Math.round(parsed)));
+            this.notifSettings.daysBeforeIntervention = days;
+            this.notifDaysDraft = String(days);
+            this.persistState();
+            this.syncInterventionNotifications();
+            this.showToast('Paramètres enregistrés.');
         },
 
         openModal(name) {
@@ -673,6 +908,12 @@ createApp({
             this.showToast('Client supprimé.');
         },
 
+        resolveContractScheduleDates(planningMode, start, end, total, manualDatesText) {
+            return planningMode === 'manual'
+                ? parseManualDates(manualDatesText)
+                : generateAutomaticDates(start, end, total);
+        },
+
         openContractModal() {
             this.editingContractId = null;
             this.contractForm = {
@@ -680,11 +921,14 @@ createApp({
                 client: '',
                 start: '',
                 end: '',
-                total: 1,
                 status: 'Actif',
-                planningMode: 'auto',
-                manualDatesText: '',
                 notes: '',
+                chaudierePlanningMode: 'auto',
+                chaudiereTotal: 1,
+                chaudiereManualDatesText: '',
+                bruleurPlanningMode: 'auto',
+                bruleurTotal: 1,
+                bruleurManualDatesText: '',
             };
             this.openModal('contractModal');
         },
@@ -696,11 +940,14 @@ createApp({
                 client: contract.client,
                 start: contract.start,
                 end: contract.end,
-                total: contract.interventionDates.length,
                 status: contract.status,
-                planningMode: contract.planningMode || 'auto',
-                manualDatesText: contract.interventionDates.join('\n'),
                 notes: contract.notes || '',
+                chaudierePlanningMode: contract.chaudierePlanningMode || contract.planningMode || 'auto',
+                chaudiereTotal: Math.max(1, contract.chaudiereDates?.length || 1),
+                chaudiereManualDatesText: (contract.chaudiereDates || []).join('\n'),
+                bruleurPlanningMode: contract.bruleurPlanningMode || contract.planningMode || 'auto',
+                bruleurTotal: Math.max(1, contract.bruleurDates?.length || 1),
+                bruleurManualDatesText: (contract.bruleurDates || []).join('\n'),
             };
             this.openModal('contractModal');
         },
@@ -711,26 +958,44 @@ createApp({
         },
 
         submitContract() {
-            const dates = this.contractForm.planningMode === 'manual'
-                ? parseManualDates(this.contractForm.manualDatesText)
-                : generateAutomaticDates(this.contractForm.start, this.contractForm.end, this.contractForm.total);
+            const chaudiereDates = this.resolveContractScheduleDates(
+                this.contractForm.chaudierePlanningMode,
+                this.contractForm.start,
+                this.contractForm.end,
+                this.contractForm.chaudiereTotal,
+                this.contractForm.chaudiereManualDatesText
+            );
+            const bruleurDates = this.resolveContractScheduleDates(
+                this.contractForm.bruleurPlanningMode,
+                this.contractForm.start,
+                this.contractForm.end,
+                this.contractForm.bruleurTotal,
+                this.contractForm.bruleurManualDatesText
+            );
 
-            if (!dates.length) {
-                this.showToast('Ajoutez au moins une date d\'intervention valide.');
+            if (!chaudiereDates.length && !bruleurDates.length) {
+                this.showToast('Planifiez au moins une intervention (chaudière ou brûleur).');
                 return;
             }
 
+            const allDates = contractAllDates({ chaudiereDates, bruleurDates });
+            const usesAuto = this.contractForm.chaudierePlanningMode === 'auto' || this.contractForm.bruleurPlanningMode === 'auto';
             const contractId = this.editingContractId || Date.now();
             const contract = this.normalizeContract({
                 id: contractId,
                 name: this.contractForm.name,
                 client: this.contractForm.client,
-                start: this.contractForm.planningMode === 'auto' ? this.contractForm.start : dates[0],
-                end: this.contractForm.planningMode === 'auto' ? this.contractForm.end : dates[dates.length - 1],
-                total: dates.length,
+                start: usesAuto ? this.contractForm.start : allDates[0],
+                end: usesAuto ? this.contractForm.end : allDates[allDates.length - 1],
+                total: allDates.length,
                 status: this.contractForm.status,
-                planningMode: this.contractForm.planningMode,
-                interventionDates: dates,
+                planningMode: this.contractForm.chaudierePlanningMode === 'manual' || this.contractForm.bruleurPlanningMode === 'manual'
+                    ? 'manual'
+                    : 'auto',
+                chaudierePlanningMode: this.contractForm.chaudierePlanningMode,
+                bruleurPlanningMode: this.contractForm.bruleurPlanningMode,
+                chaudiereDates,
+                bruleurDates,
                 notes: this.contractForm.notes,
             });
 
@@ -762,28 +1027,41 @@ createApp({
 
         syncContractInterventions(contract) {
             const existing = this.interventions.filter(intervention => intervention.contractId === contract.id);
-            const existingByDate = new Map(existing.map(intervention => [intervention.date, intervention]));
+            const existingByKey = new Map(
+                existing.map(intervention => [`${intervention.type || INTERVENTION_TYPES.CHAUDIERE}:${intervention.date}`, intervention])
+            );
+            const schedules = [
+                { type: INTERVENTION_TYPES.CHAUDIERE, dates: contract.chaudiereDates || [] },
+                { type: INTERVENTION_TYPES.BRULEUR, dates: contract.bruleurDates || [] },
+            ];
+            const synced = [];
 
-            const synced = contract.interventionDates.map(date => {
-                const current = existingByDate.get(date);
+            schedules.forEach(({ type, dates }) => {
+                dates.forEach(date => {
+                    const key = `${type}:${date}`;
+                    const current = existingByKey.get(key);
 
-                if (current) {
-                    return {
-                        ...current,
+                    if (current) {
+                        synced.push({
+                            ...current,
+                            client: contract.client,
+                            type,
+                        });
+                        return;
+                    }
+
+                    synced.push({
+                        id: allocateInterventionId([...this.interventions, ...synced]),
                         client: contract.client,
-                    };
-                }
-
-                return {
-                    id: `INT-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
-                    client: contract.client,
-                    contractId: contract.id,
-                    date,
-                    priority: 'Moyenne',
-                    status: 'Planifié',
-                    notes: '',
-                    source: 'contract',
-                };
+                        contractId: contract.id,
+                        type,
+                        date,
+                        priority: 'Moyenne',
+                        status: defaultInterventionStatus(date),
+                        notes: '',
+                        source: 'contract',
+                    });
+                });
             });
 
             this.interventions = [
@@ -796,6 +1074,7 @@ createApp({
             this.interventionForm = {
                 client: '',
                 contractId: '',
+                type: INTERVENTION_TYPES.CHAUDIERE,
                 date: '',
                 priority: 'Moyenne',
                 status: 'Planifié',
@@ -814,6 +1093,7 @@ createApp({
             this.interventionForm = {
                 client: intervention.client,
                 contractId: intervention.contractId ?? '',
+                type: intervention.type || INTERVENTION_TYPES.CHAUDIERE,
                 date: intervention.date,
                 priority: intervention.priority,
                 status: intervention.status,
@@ -839,24 +1119,24 @@ createApp({
             const contract = this.contracts.find(item => item.id === intervention.contractId);
             if (!contract) return true;
 
-            const nextDates = contract.interventionDates.map(date =>
-                date === intervention.date ? nextDate : date
-            );
+            const scheduleType = intervention.type === INTERVENTION_TYPES.BRULEUR
+                ? INTERVENTION_TYPES.BRULEUR
+                : INTERVENTION_TYPES.CHAUDIERE;
+            const scheduleKey = scheduleType === INTERVENTION_TYPES.BRULEUR ? 'bruleurDates' : 'chaudiereDates';
+            const currentDates = [...(contract[scheduleKey] || [])];
+            const nextDates = currentDates.map(date => (date === intervention.date ? nextDate : date));
             const uniqueDates = uniqueSortedDates(nextDates);
 
             if (uniqueDates.length !== nextDates.length) {
-                this.showToast('Cette date existe déjà dans le contrat lié.');
+                this.showToast('Cette date existe déjà pour ce type d\'intervention.');
                 return false;
             }
 
-            const updatedContract = {
+            const updatedContract = this.normalizeContract({
                 ...contract,
                 planningMode: 'manual',
-                interventionDates: uniqueDates,
-                start: uniqueDates[0] || contract.start,
-                end: uniqueDates[uniqueDates.length - 1] || contract.end,
-                total: uniqueDates.length,
-            };
+                [scheduleKey]: uniqueDates,
+            });
 
             this.contracts = this.contracts.map(item => item.id === contract.id ? updatedContract : item);
             return true;
@@ -874,10 +1154,20 @@ createApp({
                 return;
             }
 
+            const resolvedType = this.interventionTypeEditable
+                ? (this.interventionForm.type || INTERVENTION_TYPES.CHAUDIERE)
+                : (existing?.type || INTERVENTION_TYPES.CHAUDIERE);
+
+            if (!existing?.contractId && !resolvedType) {
+                this.showToast('Sélectionnez un type d\'intervention (Chaudière ou Brûleur).');
+                return;
+            }
+
             const payload = this.normalizeIntervention({
-                id: this.editingInterventionId || `INT-${Date.now()}`,
+                id: this.editingInterventionId || allocateInterventionId(this.interventions),
                 client: linkedContract?.client || this.interventionForm.client,
                 contractId: this.interventionForm.contractId ? Number(this.interventionForm.contractId) : null,
+                type: resolvedType,
                 date: this.interventionForm.date,
                 priority: this.interventionForm.priority,
                 status: this.interventionForm.status,
@@ -922,15 +1212,29 @@ createApp({
             return this.interventions.filter(intervention => intervention.contractId === contract.id && intervention.status === 'Terminé').length;
         },
 
+        contractInterventionTotal(contract) {
+            return contractTotalInterventions(contract);
+        },
+
         contractCompletionPercent(contract) {
-            if (!contract.interventionDates.length) return 0;
-            return Math.round((this.contractCompletedCount(contract) / contract.interventionDates.length) * 100);
+            const total = this.contractInterventionTotal(contract);
+            if (!total) return 0;
+            return Math.round((this.contractCompletedCount(contract) / total) * 100);
         },
 
         contractInterventions(contractId) {
             return this.interventions
                 .filter(intervention => intervention.contractId === contractId)
                 .sort((left, right) => new Date(left.date) - new Date(right.date));
+        },
+
+        contractInterventionsByType(contractId, type) {
+            return this.contractInterventions(contractId)
+                .filter(intervention => (intervention.type || INTERVENTION_TYPES.CHAUDIERE) === type);
+        },
+
+        interventionTypeLabel(type) {
+            return interventionTypeLabel(type);
         },
 
         interventionsByMonth() {
@@ -1054,6 +1358,13 @@ createApp({
 
         interventionStatusOptions() {
             return INTERVENTION_STATUSES;
+        },
+
+        interventionTypeOptions() {
+            return [
+                { value: INTERVENTION_TYPES.CHAUDIERE, label: 'Chaudière' },
+                { value: INTERVENTION_TYPES.BRULEUR, label: 'Brûleur' },
+            ];
         },
     },
 
