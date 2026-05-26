@@ -1,16 +1,25 @@
-import requests
+import argparse
 
-url = "http://localhost:3000/api/sendText"
-headers = {
-    "Accept": "application/json",
-    "Content-Type": "application/json",
-    "X-Api-Key": "9fe3e041c7b94367ad1a830572deb7fb"
-}
-data = {
-    "chatId": "213549398688@c.us",
-    "text": "Hi there!",
-    "session": "default"
-}
+from api.notification_service import send_telegram_message
 
-response = requests.post(url, json=data, headers=headers)
-print(response.json())
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Send a manual Telegram test notification.")
+    parser.add_argument(
+        "message",
+        nargs="?",
+        default="Hi there!",
+        help="Message text to send.",
+    )
+    args = parser.parse_args()
+
+    if not send_telegram_message(args.message):
+        print("Telegram message was not sent. Configure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID first.")
+        return 1
+
+    print("Telegram message sent.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

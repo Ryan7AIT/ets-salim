@@ -5,16 +5,28 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 try:
-    from .notification_service import read_json_setting, sync_whatsapp_notifications, write_json_setting
+    from .notification_service import (
+        configure_sqlite_connection,
+        load_notification_state,
+        read_json_setting,
+        sync_telegram_notifications,
+        write_json_setting,
+    )
 except ImportError:
-    from notification_service import read_json_setting, sync_whatsapp_notifications, write_json_setting
+    from notification_service import (
+        configure_sqlite_connection,
+        load_notification_state,
+        read_json_setting,
+        sync_telegram_notifications,
+        write_json_setting,
+    )
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -180,8 +192,9 @@ def password_hash(password: str, salt: str | None = None) -> tuple[str, str]:
 
 
 def db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    configure_sqlite_connection(conn)
     return conn
 
 
@@ -372,7 +385,7 @@ class AppState(BaseModel):
 def startup() -> None:
     init_db()
     with db() as conn:
-        sync_whatsapp_notifications(conn, read_state_from_conn(conn))
+        sync_telegram_notifications(DB_PATH, load_notification_state(conn))
 
 
 @app.post("/api/login")
@@ -391,20 +404,20 @@ def login(payload: LoginPayload) -> dict[str, Any]:
 
 
 @app.get("/api/state")
-def get_state() -> dict[str, Any]:
+def get_state(background_tasks: BackgroundTasks) -> dict[str, Any]:
     with db() as conn:
         state = read_state_from_conn(conn)
-        sync_whatsapp_notifications(conn, state)
-        return state
+    background_tasks.add_task(sync_telegram_notifications, DB_PATH, state)
+    return state
 
 
 @app.put("/api/state")
-def put_state(state: AppState) -> dict[str, Any]:
+def put_state(state: AppState, background_tasks: BackgroundTasks) -> dict[str, Any]:
     with db() as conn:
         replace_state(conn, state.model_dump())
         saved_state = read_state_from_conn(conn)
-        sync_whatsapp_notifications(conn, saved_state)
-        return saved_state
+    background_tasks.add_task(sync_telegram_notifications, DB_PATH, saved_state)
+    return saved_state
 
 
 @app.get("/")

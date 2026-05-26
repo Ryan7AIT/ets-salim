@@ -843,7 +843,7 @@ createApp({
                     id: `notif-${i.id}`,
                     interventionId: i.id,
                     title: 'Intervention à venir',
-                    message: `Intervention chez ${i.client} prévue le ${i.date} (${daysText}).`,
+                    message: `Bonjour Lotfi, vouz avez une intervention chez ${i.client} prévue le ${i.date} (${daysText}).`,
                     time: daysText,
                     read: this.notifReadStatus[i.id] || false,
                 };
