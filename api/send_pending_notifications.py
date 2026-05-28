@@ -12,7 +12,10 @@ DEFAULT_DB_PATH = Path(__file__).with_name("plombtrack.sqlite3")
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Check for unsent intervention notifications and send them to Telegram."
+        description=(
+            "Send intervention notifications to Telegram. "
+            "Resends unread in-app notifications even if already sent before."
+        )
     )
     parser.add_argument(
         "--db-path",
@@ -21,7 +24,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    result = sync_telegram_notifications_for_db(args.db_path)
+    result = sync_telegram_notifications_for_db(args.db_path, resend_if_unread=True)
     if result["status"] != "ok":
         if result["status"] == "telegram_not_configured":
             print(

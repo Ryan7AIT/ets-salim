@@ -206,6 +206,8 @@ def send_telegram_message(text: str, telegram_config: dict[str, str] | None = No
 def sync_telegram_notifications(
     db_path: str | Path,
     state: dict[str, Any],
+    *,
+    resend_if_unread: bool = False,
 ) -> dict[str, int]:
     """Send pending Telegram alerts without holding a DB connection during HTTP calls."""
     db_path = Path(db_path)
@@ -213,6 +215,7 @@ def sync_telegram_notifications(
     active_signatures = {
         item["interventionId"]: f"{item['date']}|{item['message']}" for item in notifications
     }
+    notif_read_status = state.get("notifReadStatus", {})
     telegram_config = load_telegram_config()
 
     with open_db(db_path) as conn:
@@ -228,7 +231,9 @@ def sync_telegram_notifications(
     for notification in notifications:
         intervention_id = notification["interventionId"]
         signature = active_signatures[intervention_id]
-        if next_sent_status.get(intervention_id) == signature:
+        already_sent = next_sent_status.get(intervention_id) == signature
+        is_read = bool(notif_read_status.get(intervention_id))
+        if already_sent and not (resend_if_unread and not is_read):
             continue
         if send_telegram_message(notification["message"], telegram_config):
             next_sent_status[intervention_id] = signature
@@ -254,6 +259,7 @@ def load_notification_state(conn: sqlite3.Connection) -> dict[str, Any]:
     return {
         "interventions": interventions,
         "notifSettings": read_json_setting(conn, "notifSettings", {"daysBeforeIntervention": 3}),
+        "notifReadStatus": read_json_setting(conn, "notifReadStatus", {}),
     }
 
 
@@ -264,7 +270,11 @@ def notification_tables_ready(conn: sqlite3.Connection) -> bool:
     return {row["name"] for row in rows} == {"interventions", "app_settings"}
 
 
-def sync_telegram_notifications_for_db(db_path: str | Path) -> dict[str, Any]:
+def sync_telegram_notifications_for_db(
+    db_path: str | Path,
+    *,
+    resend_if_unread: bool = False,
+) -> dict[str, Any]:
     db_path = Path(db_path)
     if not db_path.exists():
         return {"status": "db_not_initialized", "checked_notifications": 0, "sent_notifications": 0}
@@ -277,5 +287,5 @@ def sync_telegram_notifications_for_db(db_path: str | Path) -> dict[str, Any]:
             return {"status": "db_not_initialized", "checked_notifications": 0, "sent_notifications": 0}
         state = load_notification_state(conn)
 
-    result = sync_telegram_notifications(db_path, state)
+    result = sync_telegram_notifications(db_path, state, resend_if_unread=resend_if_unread)
     return {"status": "ok", **result}
