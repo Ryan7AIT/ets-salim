@@ -538,55 +538,19 @@
                     <section class="planning-column">
                         <h4 class="planning-column-title"><i class="fas fa-fire"></i> Chaudière</h4>
                         <div class="form-group">
-                            <label>Mode de planification</label>
-                            <div class="toggle-buttons planning-toggle">
-                                <button type="button" class="toggle-btn"
-                                    :class="{ active: contractForm.chaudierePlanningMode === 'auto' }"
-                                    @click="contractForm.chaudierePlanningMode = 'auto'">Automatique</button>
-                                <button type="button" class="toggle-btn"
-                                    :class="{ active: contractForm.chaudierePlanningMode === 'manual' }"
-                                    @click="contractForm.chaudierePlanningMode = 'manual'">Manuel</button>
-                            </div>
+                            <label>Nombre d'interventions prévues</label>
+                            <input type="number" v-model.number="contractForm.chaudiereTotal" min="0" required>
                         </div>
-                        <template v-if="contractForm.chaudierePlanningMode === 'auto'">
-                            <div class="form-group">
-                                <label>Nombre d'interventions</label>
-                                <input type="number" v-model="contractForm.chaudiereTotal" min="0" required>
-                            </div>
-                            <p class="planning-hint">Dates réparties entre le début et la fin du contrat.</p>
-                        </template>
-                        <div class="form-group" v-else>
-                            <label>Dates (une par ligne)</label>
-                            <textarea rows="5" v-model="contractForm.chaudiereManualDatesText"
-                                placeholder="2026-05-03&#10;2026-08-03"></textarea>
-                        </div>
+                        <p class="planning-hint">Les dates seront planifiées manuellement dans le module Interventions.</p>
                     </section>
 
                     <section class="planning-column">
                         <h4 class="planning-column-title"><i class="fas fa-burn"></i> Brûleur</h4>
                         <div class="form-group">
-                            <label>Mode de planification</label>
-                            <div class="toggle-buttons planning-toggle">
-                                <button type="button" class="toggle-btn"
-                                    :class="{ active: contractForm.bruleurPlanningMode === 'auto' }"
-                                    @click="contractForm.bruleurPlanningMode = 'auto'">Automatique</button>
-                                <button type="button" class="toggle-btn"
-                                    :class="{ active: contractForm.bruleurPlanningMode === 'manual' }"
-                                    @click="contractForm.bruleurPlanningMode = 'manual'">Manuel</button>
-                            </div>
+                            <label>Nombre d'interventions prévues</label>
+                            <input type="number" v-model.number="contractForm.bruleurTotal" min="0" required>
                         </div>
-                        <template v-if="contractForm.bruleurPlanningMode === 'auto'">
-                            <div class="form-group">
-                                <label>Nombre d'interventions</label>
-                                <input type="number" v-model="contractForm.bruleurTotal" min="0" required>
-                            </div>
-                            <p class="planning-hint">Dates réparties entre le début et la fin du contrat.</p>
-                        </template>
-                        <div class="form-group" v-else>
-                            <label>Dates (une par ligne)</label>
-                            <textarea rows="5" v-model="contractForm.bruleurManualDatesText"
-                                placeholder="2026-04-10&#10;2026-07-10"></textarea>
-                        </div>
+                        <p class="planning-hint">Les dates seront planifiées manuellement dans le module Interventions.</p>
                     </section>
                 </div>
 
@@ -622,9 +586,9 @@
                         <strong>{{ contractInterventionTotal(selectedContract) }}</strong>
                     </div>
                     <div class="detail-card">
-                        <span>Chaudière / Brûleur</span>
-                        <strong>{{ (selectedContract.chaudiereDates || []).length }} / {{
-                            (selectedContract.bruleurDates || []).length }}</strong>
+                        <span>Chaudière / Brûleur (prévu)</span>
+                        <strong>{{ selectedContract.chaudiereTotal || 0 }} / {{
+                            selectedContract.bruleurTotal || 0 }}</strong>
                     </div>
                     <div class="detail-card">
                         <span>Interventions terminées</span>
@@ -683,7 +647,7 @@
                 </div>
                 <div class="form-group">
                     <label>Contrat lié (optionnel)</label>
-                    <select v-model="interventionForm.contractId" :disabled="editingInterventionId"
+                    <select v-model="interventionForm.contractId"
                         @change="syncInterventionClientWithContract()">
                         <option value="">Aucun contrat</option>
                         <option v-for="contract in contracts" :key="contract.id" :value="contract.id">{{
@@ -691,8 +655,7 @@
                     </select>
                     <p v-if="editingInterventionId && interventionForm.contractId"
                         style="color:var(--text-muted);font-size:0.82rem;margin-top:8px">
-                        Le client et le contrat restent liés au contrat. Si vous modifiez la date ici, le planning du
-                        contrat sera mis à jour aussi.
+                        Le client est synchronisé avec le contrat lié.
                     </p>
                 </div>
                 <div class="form-row">
@@ -702,10 +665,6 @@
                             <option v-for="option in interventionTypeOptions()" :key="option.value"
                                 :value="option.value">{{ option.label }}</option>
                         </select>
-                        <p v-if="!interventionTypeEditable"
-                            style="color:var(--text-muted);font-size:0.82rem;margin-top:8px">
-                            Le type est défini par le contrat lié.
-                        </p>
                     </div>
                     <div class="form-group">
                         <label>Date</label>
