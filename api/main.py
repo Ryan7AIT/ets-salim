@@ -7,22 +7,52 @@ from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 try:
+    from .invoice_service import (
+        build_excel,
+        build_pdf,
+        create_invoice,
+        default_invoice_settings,
+        delete_invoice,
+        get_invoice,
+        invoices_enabled,
+        list_invoices,
+        load_invoice_settings,
+        require_invoices_enabled,
+        save_invoice_settings,
+        update_invoice,
+    )
     from .notification_service import (
         configure_sqlite_connection,
         load_notification_state,
+        read_config_value,
         read_json_setting,
         sync_telegram_notifications,
         write_json_setting,
     )
 except ImportError:
+    from invoice_service import (
+        build_excel,
+        build_pdf,
+        create_invoice,
+        default_invoice_settings,
+        delete_invoice,
+        get_invoice,
+        invoices_enabled,
+        list_invoices,
+        load_invoice_settings,
+        require_invoices_enabled,
+        save_invoice_settings,
+        update_invoice,
+    )
     from notification_service import (
         configure_sqlite_connection,
         load_notification_state,
+        read_config_value,
         read_json_setting,
         sync_telegram_notifications,
         write_json_setting,
@@ -265,6 +295,32 @@ def init_db() -> None:
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS invoices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                number TEXT NOT NULL UNIQUE,
+                client_id INTEGER NOT NULL,
+                issue_date TEXT NOT NULL,
+                due_date TEXT DEFAULT '',
+                status TEXT DEFAULT 'draft',
+                currency TEXT DEFAULT 'DZD',
+                notes TEXT DEFAULT '',
+                adjustment REAL DEFAULT 0,
+                discount_amount REAL DEFAULT 0,
+                tax_rate REAL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (client_id) REFERENCES clients(id)
+            );
+            CREATE TABLE IF NOT EXISTS invoice_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invoice_id INTEGER NOT NULL,
+                description TEXT NOT NULL,
+                period TEXT DEFAULT '',
+                quantity REAL DEFAULT 1,
+                unit_price REAL DEFAULT 0,
+                sort_order INTEGER DEFAULT 0,
+                FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+            );
             """
         )
 
@@ -287,6 +343,10 @@ def init_db() -> None:
         intervention_columns = {row[1] for row in conn.execute("PRAGMA table_info(interventions)")}
         if "type" not in intervention_columns:
             conn.execute("ALTER TABLE interventions ADD COLUMN type TEXT")
+
+        invoice_columns = {row[1] for row in conn.execute("PRAGMA table_info(invoices)")}
+        if "discount_amount" not in invoice_columns:
+            conn.execute("ALTER TABLE invoices ADD COLUMN discount_amount REAL DEFAULT 0")
 
 
 def read_state() -> dict[str, Any]:
@@ -372,6 +432,51 @@ class AppState(BaseModel):
     notifReadStatus: dict[str, bool] = Field(default_factory=dict)
 
 
+class InvoiceItemPayload(BaseModel):
+    id: int | None = None
+    description: str
+    quantity: float = 1
+    unitPrice: float = 0
+    sortOrder: int = 0
+
+
+class InvoicePayload(BaseModel):
+    number: str | None = None
+    clientId: int
+    issueDate: str | None = None
+    dueDate: str | None = None
+    status: str = "draft"
+    currency: str | None = None
+    notes: str = ""
+    adjustment: float = 0
+    discountAmount: float = 0
+    taxRate: float | None = None
+    items: list[InvoiceItemPayload] = Field(default_factory=list)
+
+
+class InvoiceSettingsPayload(BaseModel):
+    companyName: str = ""
+    contactName: str = ""
+    address: str = ""
+    email: str = ""
+    phone: str = ""
+    nif: str = ""
+    registrationNumber: str = ""
+    rip: str = ""
+    logoMode: str = "text"
+    logoText: str = ""
+    logoImage: str = ""
+    invoiceLanguage: str = "fr"
+    defaultTaxRate: float = 20
+    currency: str = "DZD"
+    paymentTermsDays: int = 7
+    footerNotes: str = ""
+
+
+def feature_flags() -> dict[str, bool]:
+    return {"invoices": invoices_enabled(read_config_value)}
+
+
 @app.on_event("startup")
 def startup() -> None:
     init_db()
@@ -394,6 +499,11 @@ def login(payload: LoginPayload) -> dict[str, Any]:
     return {"ok": True, "user": {"id": user["id"], "username": user["username"]}}
 
 
+@app.get("/api/config")
+def get_config() -> dict[str, Any]:
+    return {"features": feature_flags()}
+
+
 @app.get("/api/state")
 def get_state(background_tasks: BackgroundTasks) -> dict[str, Any]:
     with db() as conn:
@@ -409,6 +519,86 @@ def put_state(state: AppState, background_tasks: BackgroundTasks) -> dict[str, A
         saved_state = read_state_from_conn(conn)
     background_tasks.add_task(sync_telegram_notifications, DB_PATH, saved_state)
     return saved_state
+
+
+@app.get("/api/invoices")
+def api_list_invoices() -> list[dict[str, Any]]:
+    require_invoices_enabled(read_config_value)
+    with db() as conn:
+        return list_invoices(conn)
+
+
+@app.post("/api/invoices")
+def api_create_invoice(payload: InvoicePayload) -> dict[str, Any]:
+    require_invoices_enabled(read_config_value)
+    with db() as conn:
+        return create_invoice(conn, payload.model_dump())
+
+
+@app.get("/api/invoices/{invoice_id}")
+def api_get_invoice(invoice_id: int) -> dict[str, Any]:
+    require_invoices_enabled(read_config_value)
+    with db() as conn:
+        return get_invoice(conn, invoice_id)
+
+
+@app.put("/api/invoices/{invoice_id}")
+def api_update_invoice(invoice_id: int, payload: InvoicePayload) -> dict[str, Any]:
+    require_invoices_enabled(read_config_value)
+    with db() as conn:
+        return update_invoice(conn, invoice_id, payload.model_dump())
+
+
+@app.delete("/api/invoices/{invoice_id}")
+def api_delete_invoice(invoice_id: int) -> dict[str, bool]:
+    require_invoices_enabled(read_config_value)
+    with db() as conn:
+        delete_invoice(conn, invoice_id)
+    return {"ok": True}
+
+
+@app.get("/api/invoices/{invoice_id}/export.pdf")
+def api_export_invoice_pdf(invoice_id: int) -> Response:
+    require_invoices_enabled(read_config_value)
+    with db() as conn:
+        invoice = get_invoice(conn, invoice_id)
+        settings = load_invoice_settings(conn)
+        pdf_bytes = build_pdf(invoice, settings)
+    filename = f"invoice-{invoice['number']}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/invoices/{invoice_id}/export.xlsx")
+def api_export_invoice_xlsx(invoice_id: int) -> Response:
+    require_invoices_enabled(read_config_value)
+    with db() as conn:
+        invoice = get_invoice(conn, invoice_id)
+        settings = load_invoice_settings(conn)
+        excel_bytes = build_excel(invoice, settings)
+    filename = f"invoice-{invoice['number']}.xlsx"
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/invoice-settings")
+def api_get_invoice_settings() -> dict[str, Any]:
+    require_invoices_enabled(read_config_value)
+    with db() as conn:
+        return load_invoice_settings(conn)
+
+
+@app.put("/api/invoice-settings")
+def api_put_invoice_settings(payload: InvoiceSettingsPayload) -> dict[str, Any]:
+    require_invoices_enabled(read_config_value)
+    with db() as conn:
+        return save_invoice_settings(conn, payload.model_dump())
 
 
 @app.get("/")

@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ets Bellal Salim </title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
@@ -63,6 +63,9 @@
                         </li>
                         <li :class="{ active: currentPage === 'interventions' }" @click="navigate('interventions')">
                             <a href="#"><i class="fas fa-calendar-check"></i> <span>Interventions</span></a>
+                        </li>
+                        <li v-if="features.invoices" :class="{ active: currentPage === 'invoices' }" @click="navigate('invoices')">
+                            <a href="#"><i class="fas fa-file-invoice"></i> <span>Factures</span></a>
                         </li>
                         <li :class="{ active: currentPage === 'parametres' }" @click="navigate('parametres')">
                             <a href="#"><i class="fas fa-cog"></i> <span>Paramètres</span></a>
@@ -194,6 +197,9 @@
                                     </button>
                                     <button class="action-item" @click="openInterventionModal()">
                                         <i class="fas fa-calendar-plus"></i> Planifier une Intervention
+                                    </button>
+                                    <button v-if="features.invoices" class="action-item" @click="openInvoiceModal()">
+                                        <i class="fas fa-file-invoice-dollar"></i> Créer une Facture
                                     </button>
                                 </div>
                             </div>
@@ -401,6 +407,75 @@
                 </div>
                 </section>
 
+                    <!-- Factures -->
+                    <section v-if="features.invoices" class="page" :class="{ active: currentPage === 'invoices' }">
+                        <div class="card">
+                            <div class="table-controls">
+                                <div class="search-bar">
+                                    <input type="text" v-model="invoiceSearch"
+                                        placeholder="Rechercher par numéro, client ou statut...">
+                                </div>
+                                <button class="primary-btn" @click="openInvoiceModal()">
+                                    <i class="fas fa-plus"></i> Nouvelle Facture
+                                </button>
+                            </div>
+                            <div class="table-responsive">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>N°</th>
+                                            <th>Client</th>
+                                            <th>Émission</th>
+                                            <th>Échéance</th>
+                                            <th>Statut</th>
+                                            <th>Total</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="invoice in filteredInvoices" :key="invoice.id">
+                                            <td><strong>{{ invoice.number }}</strong></td>
+                                            <td>{{ invoice.client?.company || '—' }}</td>
+                                            <td>{{ formatInvoiceDate(invoice.issueDate) }}</td>
+                                            <td>{{ formatInvoiceDate(invoice.dueDate) }}</td>
+                                            <td>
+                                                <span class="badge" :class="invoiceStatusClass(invoice.status)">
+                                                    {{ invoiceStatusLabel(invoice.status) }}
+                                                </span>
+                                            </td>
+                                            <td>{{ formatInvoiceMoney(invoice.totals?.total, invoice.currency) }}</td>
+                                            <td>
+                                                <div class="inline-actions">
+                                                    <button class="icon-btn" title="Aperçu" @click="openInvoicePreview(invoice)">
+                                                        <i class="far fa-eye"></i>
+                                                    </button>
+                                                    <button class="icon-btn" title="PDF" @click="exportInvoice(invoice.id, 'pdf')">
+                                                        <i class="far fa-file-pdf"></i>
+                                                    </button>
+                                                    <button class="icon-btn" title="Excel" @click="exportInvoice(invoice.id, 'xlsx')">
+                                                        <i class="far fa-file-excel"></i>
+                                                    </button>
+                                                    <button class="icon-btn" title="Modifier" @click="startEditInvoice(invoice)">
+                                                        <i class="far fa-edit"></i>
+                                                    </button>
+                                                    <button class="icon-btn" title="Supprimer" style="color:var(--danger)"
+                                                        @click="deleteInvoice(invoice.id)">
+                                                        <i class="far fa-trash-alt"></i>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        <tr v-if="filteredInvoices.length === 0">
+                                            <td colspan="7"
+                                                style="text-align:center;color:var(--text-muted);padding:32px">
+                                                Aucune facture trouvée.</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </section>
+
                 <section class="page" :class="{ active: currentPage === 'reports' }">
                     <div class="kpi-grid">
                         <div class="card kpi-card">
@@ -447,6 +522,114 @@
                                     Une notification apparaîtra automatiquement X jours avant chaque intervention
                                     planifiée ou en cours (entre 1 et 60 jours).
                                 </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-if="features.invoices" class="card">
+                        <div class="card-header">
+                            <h3>Facturation</h3>
+                        </div>
+                        <div class="invoice-settings-body">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Nom de l'entreprise</label>
+                                    <input type="text" v-model="invoiceSettingsDraft.companyName">
+                                </div>
+                                <div class="form-group">
+                                    <label>Contact</label>
+                                    <input type="text" v-model="invoiceSettingsDraft.contactName">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>NIF</label>
+                                    <input type="text" v-model="invoiceSettingsDraft.nif"
+                                        placeholder="Numéro d'identification fiscale">
+                                </div>
+                                <div class="form-group">
+                                    <label>Numéro d'immatriculation</label>
+                                    <input type="text" v-model="invoiceSettingsDraft.registrationNumber">
+                                </div>
+                                <div class="form-group">
+                                    <label>RIP (compte bancaire)</label>
+                                    <input type="text" v-model="invoiceSettingsDraft.rip"
+                                        placeholder="Relevé d'Identité Postal">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Email</label>
+                                    <input type="email" v-model="invoiceSettingsDraft.email">
+                                </div>
+                                <div class="form-group">
+                                    <label>Téléphone</label>
+                                    <input type="tel" v-model="invoiceSettingsDraft.phone">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Adresse</label>
+                                <textarea rows="2" v-model="invoiceSettingsDraft.address"></textarea>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Langue des factures</label>
+                                    <select v-model="invoiceSettingsDraft.invoiceLanguage">
+                                        <option value="fr">Français</option>
+                                        <option value="en">English</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Devise par défaut</label>
+                                    <select v-model="invoiceSettingsDraft.currency">
+                                        <option value="DZD">DZD</option>
+                                        <option value="EUR">EUR</option>
+                                        <option value="USD">USD</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>TVA par défaut (%)</label>
+                                    <input type="number" min="0" step="0.01" v-model.number="invoiceSettingsDraft.defaultTaxRate">
+                                </div>
+                                <div class="form-group">
+                                    <label>Échéance (jours)</label>
+                                    <input type="number" min="0" v-model.number="invoiceSettingsDraft.paymentTermsDays">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Logo</label>
+                                <div class="logo-mode-toggle">
+                                    <label class="radio-chip">
+                                        <input type="radio" value="text" v-model="invoiceSettingsDraft.logoMode">
+                                        Texte stylisé
+                                    </label>
+                                    <label class="radio-chip">
+                                        <input type="radio" value="image" v-model="invoiceSettingsDraft.logoMode">
+                                        Image importée
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="form-group" v-if="invoiceSettingsDraft.logoMode === 'text'">
+                                <label>Texte du logo</label>
+                                <input type="text" v-model="invoiceSettingsDraft.logoText" placeholder="Ets Bellal Salim">
+                                <div class="logo-text-preview">{{ invoiceSettingsDraft.logoText || invoiceSettingsDraft.companyName }}</div>
+                            </div>
+                            <div class="form-group" v-else>
+                                <label>Image du logo</label>
+                                <input type="file" accept="image/*" @change="onInvoiceLogoFileChange($event)">
+                                <div v-if="invoiceSettingsDraft.logoImage" class="logo-image-preview">
+                                    <img :src="invoiceSettingsDraft.logoImage" alt="Logo preview">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Notes de pied de page</label>
+                                <textarea rows="2" v-model="invoiceSettingsDraft.footerNotes"
+                                    placeholder="Conditions de paiement, mentions légales..."></textarea>
+                            </div>
+                            <div class="modal-footer" style="border-top:none;padding-top:0;margin-top:8px">
+                                <button type="button" class="primary-btn" @click="saveInvoiceSettings()">
+                                    Enregistrer la facturation
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -699,6 +882,221 @@
                         'Planifier' }}</button>
                 </div>
             </form>
+        </div>
+
+        <!-- Modal Facture -->
+        <div class="modal modal-wide" v-show="activeModal === 'invoiceModal'">
+            <div class="modal-header">
+                <h3>{{ editingInvoiceId ? 'Modifier la Facture' : 'Nouvelle Facture' }}</h3>
+                <button class="close-modal" @click="closeModal()">&times;</button>
+            </div>
+            <form class="modal-body invoice-form-body" @submit.prevent="submitInvoice()">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Client</label>
+                        <select v-model="invoiceForm.clientId" required>
+                            <option value="" disabled>Sélectionner un client</option>
+                            <option v-for="c in clients" :key="c.id" :value="c.id">{{ c.company }}</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Numéro</label>
+                        <input type="text" v-model="invoiceForm.number" placeholder="Auto">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Date d'émission</label>
+                        <input type="date" v-model="invoiceForm.issueDate" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Date d'échéance</label>
+                        <input type="date" v-model="invoiceForm.dueDate">
+                    </div>
+                    <div class="form-group">
+                        <label>Statut</label>
+                        <select v-model="invoiceForm.status">
+                            <option value="draft">Brouillon</option>
+                            <option value="sent">Envoyée</option>
+                            <option value="paid">Payée</option>
+                            <option value="cancelled">Annulée</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="invoice-lines-block">
+                    <div class="card-header">
+                        <h4>Lignes de facture</h4>
+                        <button type="button" class="text-btn" @click="addInvoiceLine()">+ Ajouter une ligne</button>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="invoice-lines-table">
+                            <thead>
+                                <tr>
+                                    <th>Description</th>
+                                    <th>Qté</th>
+                                    <th>Prix unitaire</th>
+                                    <th>Montant</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="(item, index) in invoiceForm.items" :key="index">
+                                    <td><input type="text" v-model="item.description" required></td>
+                                    <td><input type="number" min="0" step="0.01" v-model.number="item.quantity"></td>
+                                    <td><input type="number" min="0" step="0.01" v-model.number="item.unitPrice"></td>
+                                    <td class="amount-cell">{{ formatInvoiceMoney(invoiceLineAmount(item), invoiceForm.currency) }}</td>
+                                    <td>
+                                        <button type="button" class="icon-btn" :disabled="invoiceForm.items.length <= 1"
+                                            @click="removeInvoiceLine(index)">
+                                            <i class="far fa-trash-alt"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Ajustement</label>
+                        <input type="number" step="0.01" v-model.number="invoiceForm.adjustment">
+                    </div>
+                    <div class="form-group">
+                        <label>Remise</label>
+                        <input type="number" min="0" step="0.01" v-model.number="invoiceForm.discountAmount">
+                    </div>
+                    <div class="form-group">
+                        <label>TVA (%)</label>
+                        <input type="number" min="0" step="0.01" v-model.number="invoiceForm.taxRate">
+                    </div>
+                    <div class="form-group">
+                        <label>Devise</label>
+                        <select v-model="invoiceForm.currency">
+                            <option value="DZD">DZD</option>
+                            <option value="EUR">EUR</option>
+                            <option value="USD">USD</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Notes</label>
+                    <textarea rows="2" v-model="invoiceForm.notes" placeholder="Notes affichées sur la facture..."></textarea>
+                </div>
+
+                <div class="invoice-totals-summary">
+                    <div><span>Sous-total</span><strong>{{ formatInvoiceMoney(invoiceFormTotals.subtotal, invoiceForm.currency) }}</strong></div>
+                    <div><span>Ajustements</span><strong>{{ formatInvoiceMoney(invoiceFormTotals.adjustment, invoiceForm.currency) }}</strong></div>
+                    <div><span>Remise</span><strong>-{{ formatInvoiceMoney(invoiceFormTotals.discount, invoiceForm.currency) }}</strong></div>
+                    <div><span>Sous-total ajusté</span><strong>{{ formatInvoiceMoney(invoiceFormTotals.taxableSubtotal, invoiceForm.currency) }}</strong></div>
+                    <div><span>TVA</span><strong>{{ formatInvoiceMoney(invoiceFormTotals.tax, invoiceForm.currency) }}</strong></div>
+                    <div class="invoice-total-row"><span>Total</span><strong>{{ formatInvoiceMoney(invoiceFormTotals.total, invoiceForm.currency) }}</strong></div>
+                </div>
+
+                <div class="modal-footer">
+                    <button type="button" class="secondary-btn" @click="closeModal()">Annuler</button>
+                    <button type="submit" class="primary-btn">{{ editingInvoiceId ? 'Mettre à jour' : 'Créer' }}</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Modal Aperçu Facture -->
+        <div class="modal modal-wide invoice-preview-modal" v-if="activeModal === 'invoicePreviewModal' && previewInvoice">
+            <div class="modal-header">
+                <div>
+                    <h3>Facture {{ previewInvoice.number }}</h3>
+                    <p class="modal-subtitle">{{ previewInvoice.client?.company }}</p>
+                </div>
+                <button class="close-modal" @click="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="invoice-document">
+                    <div class="invoice-doc-header">
+                        <div class="invoice-doc-brand">
+                            <div class="invoice-doc-logo">
+                                <img v-if="invoiceSettings.logoMode === 'image' && invoiceSettings.logoImage"
+                                    :src="invoiceSettings.logoImage" alt="Logo">
+                                <span v-else class="invoice-logo-text">{{ invoiceSettings.logoText || invoiceSettings.companyName }}</span>
+                            </div>
+                        </div>
+                        <div class="invoice-doc-meta">
+                            <p class="invoice-meta-number">
+                                <strong>{{ invoiceText.invoiceNumber }}</strong> {{ previewInvoice.number }}
+                            </p>
+                            <p class="invoice-meta-dates">
+                                <span><strong>{{ invoiceText.issueDate }}</strong> {{ formatInvoiceDate(previewInvoice.issueDate) }}</span>
+                                <span class="invoice-meta-sep">|</span>
+                                <span><strong>{{ invoiceText.dueDate }}</strong> {{ formatInvoiceDate(previewInvoice.dueDate) }}</span>
+                            </p>
+                        </div>
+                    </div>
+                    <div class="invoice-doc-addresses">
+                        <div>
+                            <p class="address-label">{{ invoiceText.seller }}</p>
+                            <p>{{ invoiceSettings.companyName }}</p>
+                            <p>{{ invoiceSettings.contactName }}</p>
+                            <p>{{ invoiceSettings.address }}</p>
+                            <p>{{ invoiceSettings.email }}</p>
+                            <p>{{ invoiceSettings.phone }}</p>
+                            <p v-if="invoiceSettings.nif">{{ invoiceText.nif }} {{ invoiceSettings.nif }}</p>
+                            <p v-if="invoiceSettings.registrationNumber">
+                                {{ invoiceText.registrationNumber }} {{ invoiceSettings.registrationNumber }}
+                            </p>
+                            <p v-if="invoiceSettings.rip">{{ invoiceText.rip }} {{ invoiceSettings.rip }}</p>
+                        </div>
+                        <div>
+                            <p class="address-label">{{ invoiceText.billTo }}</p>
+                            <p>C{{ String(previewInvoice.client?.id || '').padStart(3, '0') }} - {{ previewInvoice.client?.company }}</p>
+                            <p>{{ previewInvoice.client?.contact }}</p>
+                            <p>{{ previewInvoice.client?.address }}</p>
+                            <p>{{ previewInvoice.client?.email }}</p>
+                        </div>
+                    </div>
+                    <table class="invoice-doc-table">
+                        <thead>
+                            <tr>
+                                <th>{{ invoiceText.description }}</th>
+                                <th>{{ invoiceText.quantity }}</th>
+                                <th>{{ invoiceText.unitPrice }}</th>
+                                <th>{{ invoiceText.amount }}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="(item, index) in previewInvoice.items" :key="index">
+                                <td>{{ item.description }}</td>
+                                <td class="num">{{ item.quantity }}</td>
+                                <td class="num">{{ formatInvoiceMoney(item.unitPrice, previewInvoice.currency) }}</td>
+                                <td class="num">{{ formatInvoiceMoney(item.amount, previewInvoice.currency) }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <div class="invoice-doc-footer">
+                        <div class="invoice-doc-notes">
+                            <p><strong>{{ invoiceText.notes }}</strong></p>
+                            <p>{{ previewInvoice.notes || invoiceSettings.footerNotes || '—' }}</p>
+                        </div>
+                        <div class="invoice-doc-totals">
+                            <div><span>{{ invoiceText.subtotal }}</span><strong>{{ formatInvoiceMoney(previewInvoice.totals?.subtotal, previewInvoice.currency) }}</strong></div>
+                            <div><span>{{ invoiceText.adjustments }}</span><strong>{{ formatInvoiceMoney(previewInvoice.totals?.adjustment, previewInvoice.currency) }}</strong></div>
+                            <div><span>{{ invoiceText.discount }}</span><strong>-{{ formatInvoiceMoney(previewInvoice.totals?.discount, previewInvoice.currency) }}</strong></div>
+                            <div><span>{{ invoiceText.adjustedSubtotal }}</span><strong>{{ formatInvoiceMoney(previewInvoice.totals?.taxableSubtotal, previewInvoice.currency) }}</strong></div>
+                            <div><span>{{ invoiceText.tax }} ({{ previewInvoice.taxRate }}%)</span><strong>{{ formatInvoiceMoney(previewInvoice.totals?.tax, previewInvoice.currency) }}</strong></div>
+                            <div class="total-row"><span>{{ invoiceText.total }}</span><strong>{{ formatInvoiceMoney(previewInvoice.totals?.total, previewInvoice.currency) }}</strong></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="secondary-btn" @click="exportInvoice(previewInvoice.id, 'pdf')">
+                    <i class="far fa-file-pdf"></i> PDF
+                </button>
+                <button type="button" class="secondary-btn" @click="exportInvoice(previewInvoice.id, 'xlsx')">
+                    <i class="far fa-file-excel"></i> Excel
+                </button>
+                <button type="button" class="primary-btn" @click="startEditInvoice(previewInvoice)">Modifier</button>
+            </div>
         </div>
 
     </div><!-- /modal-overlay -->

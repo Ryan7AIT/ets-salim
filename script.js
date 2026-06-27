@@ -227,6 +227,143 @@ function createDefaultState() {
     };
 }
 
+function createDefaultInvoiceSettings() {
+    return {
+        companyName: 'Ets Bellal Salim',
+        contactName: '',
+        address: '',
+        email: '',
+        phone: '',
+        nif: '',
+        registrationNumber: '',
+        rip: '',
+        logoMode: 'text',
+        logoText: 'Ets Bellal Salim',
+        logoImage: '',
+        invoiceLanguage: 'fr',
+        defaultTaxRate: 20,
+        currency: 'DZD',
+        paymentTermsDays: 7,
+        footerNotes: '',
+    };
+}
+
+function createEmptyInvoiceItem() {
+    return { description: '', quantity: 1, unitPrice: 0 };
+}
+
+function createDefaultInvoiceForm(settings = {}) {
+    const today = new Date().toISOString().slice(0, 10);
+    const due = new Date();
+    due.setDate(due.getDate() + (Number(settings.paymentTermsDays) || 7));
+    return {
+        number: '',
+        clientId: '',
+        issueDate: today,
+        dueDate: due.toISOString().slice(0, 10),
+        status: 'draft',
+        currency: settings.currency || 'DZD',
+        notes: '',
+        adjustment: 0,
+        discountAmount: 0,
+        taxRate: Number(settings.defaultTaxRate) || 0,
+        items: [createEmptyInvoiceItem()],
+    };
+}
+
+function computeInvoiceTotals(items, adjustment, taxRate, discountAmount = 0) {
+    const subtotal = (items || []).reduce((sum, item) => {
+        const qty = Number(item.quantity) || 0;
+        const price = Number(item.unitPrice) || 0;
+        return sum + qty * price;
+    }, 0);
+    const roundedSubtotal = Math.round(subtotal * 100) / 100;
+    const adj = Number(adjustment) || 0;
+    const discount = Math.max(0, Number(discountAmount) || 0);
+    const adjustedSubtotal = Math.round((roundedSubtotal + adj) * 100) / 100;
+    const taxableSubtotal = Math.round(Math.max(0, adjustedSubtotal - discount) * 100) / 100;
+    const tax = Math.round(taxableSubtotal * (Number(taxRate) || 0) / 100 * 100) / 100;
+    const total = Math.round((taxableSubtotal + tax) * 100) / 100;
+    return { subtotal: roundedSubtotal, adjustment: adj, discount, adjustedSubtotal, taxableSubtotal, tax, total };
+}
+
+const INVOICE_LABELS = {
+    en: {
+        title: 'Invoice',
+        invoiceNumber: 'Invoice Number:',
+        issueDate: 'Date of Issue:',
+        dueDate: 'Date Due:',
+        seller: 'From:',
+        billTo: 'Bill To:',
+        description: 'Description',
+        quantity: 'Qty',
+        unitPrice: 'Unit price',
+        amount: 'Amount',
+        notes: 'Notes:',
+        subtotal: 'Subtotal',
+        adjustments: 'Adjustments',
+        discount: 'Discount',
+        adjustedSubtotal: 'Adjusted Subtotal',
+        tax: 'Tax',
+        total: 'Total',
+        nif: 'NIF:',
+        registrationNumber: 'Registration No.:',
+        rip: 'RIP:',
+    },
+    fr: {
+        title: 'Facture',
+        invoiceNumber: 'Numéro de facture :',
+        issueDate: "Date d'émission :",
+        dueDate: "Date d'échéance :",
+        seller: 'Émetteur :',
+        billTo: 'Facturé à :',
+        description: 'Description',
+        quantity: 'Qté',
+        unitPrice: 'Prix unitaire',
+        amount: 'Montant',
+        notes: 'Notes :',
+        subtotal: 'Sous-total',
+        adjustments: 'Ajustements',
+        discount: 'Remise',
+        adjustedSubtotal: 'Sous-total ajusté',
+        tax: 'TVA',
+        total: 'Total',
+        nif: 'NIF :',
+        registrationNumber: "N° d'immatriculation :",
+        rip: 'RIP :',
+    },
+};
+
+function invoiceLabels(language = 'fr') {
+    return INVOICE_LABELS[language] || INVOICE_LABELS.fr;
+}
+
+function formatInvoiceMoney(amount, currency = 'DZD') {
+    const value = Number(amount) || 0;
+    const symbols = { DZD: 'DA', EUR: '€', USD: '$' };
+    const symbol = symbols[currency] || currency;
+    const formatted = value.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (symbol === '€' || symbol === '$') return `${symbol}${formatted}`;
+    return `${formatted} ${symbol}`;
+}
+
+function formatInvoiceDate(value) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleDateString('fr-FR');
+}
+
+function invoiceStatusLabel(status) {
+    const labels = {
+        draft: 'Brouillon',
+        sent: 'Envoyée',
+        paid: 'Payée',
+        cancelled: 'Annulée',
+    };
+    return labels[status] || status;
+}
+
 createApp({
 
     data() {
@@ -289,6 +426,15 @@ createApp({
                 status: 'Planifié',
                 notes: '',
             },
+
+            features: { invoices: false },
+            invoices: [],
+            invoiceSearch: '',
+            invoiceSettings: createDefaultInvoiceSettings(),
+            invoiceSettingsDraft: createDefaultInvoiceSettings(),
+            editingInvoiceId: null,
+            previewInvoiceId: null,
+            invoiceForm: createDefaultInvoiceForm(),
         };
     },
 
@@ -299,6 +445,7 @@ createApp({
                 clients: 'Clients',
                 contracts: 'Contrats',
                 interventions: 'Interventions',
+                invoices: 'Factures',
                 reports: 'Rapports & KPIs',
                 parametres: 'Paramètres',
             };
@@ -415,6 +562,42 @@ createApp({
                 .sort((left, right) => right.volume - left.volume)
                 .slice(0, 5);
         },
+
+        filteredInvoices() {
+            const q = this.invoiceSearch.toLowerCase();
+            return this.invoices.filter(invoice => {
+                const clientName = invoice.client?.company || '';
+                return (
+                    String(invoice.number).toLowerCase().includes(q)
+                    || clientName.toLowerCase().includes(q)
+                    || invoiceStatusLabel(invoice.status).toLowerCase().includes(q)
+                );
+            });
+        },
+
+        invoiceFormTotals() {
+            return computeInvoiceTotals(
+                this.invoiceForm.items,
+                this.invoiceForm.adjustment,
+                this.invoiceForm.taxRate,
+                this.invoiceForm.discountAmount
+            );
+        },
+
+        previewInvoice() {
+            if (this.previewInvoiceId) {
+                return this.invoices.find(invoice => invoice.id === this.previewInvoiceId) || null;
+            }
+            return null;
+        },
+
+        previewInvoiceClient() {
+            return this.previewInvoice?.client || this.clients.find(c => c.id === Number(this.invoiceForm.clientId)) || null;
+        },
+
+        invoiceText() {
+            return invoiceLabels(this.invoiceSettings.invoiceLanguage);
+        },
     },
 
     watch: {
@@ -470,8 +653,13 @@ createApp({
     },
 
     async mounted() {
+        await this.loadConfig();
         await this.loadState();
         this.isAuthenticated = JSON.parse(localStorage.getItem(AUTH_KEY) || 'false');
+        if (this.isAuthenticated && this.features.invoices) {
+            await this.loadInvoices();
+            await this.loadInvoiceSettings();
+        }
     },
 
     beforeUnmount() {
@@ -491,6 +679,217 @@ createApp({
             }
 
             return response.json();
+        },
+
+        async loadConfig() {
+            try {
+                const config = await this.apiRequest('/config');
+                this.features = { invoices: Boolean(config?.features?.invoices) };
+            } catch (error) {
+                console.error('Unable to load API config.', error);
+                this.features = { invoices: false };
+            }
+        },
+
+        async loadInvoices() {
+            if (!this.features.invoices) return;
+            try {
+                this.invoices = await this.apiRequest('/invoices');
+            } catch (error) {
+                console.error('Unable to load invoices.', error);
+                this.showToast('Impossible de charger les factures.');
+            }
+        },
+
+        async loadInvoiceSettings() {
+            if (!this.features.invoices) return;
+            try {
+                const settings = await this.apiRequest('/invoice-settings');
+                this.invoiceSettings = { ...createDefaultInvoiceSettings(), ...settings };
+                this.invoiceSettingsDraft = { ...this.invoiceSettings };
+            } catch (error) {
+                console.error('Unable to load invoice settings.', error);
+            }
+        },
+
+        async saveInvoiceSettings() {
+            if (!this.features.invoices) return;
+            try {
+                const saved = await this.apiRequest('/invoice-settings', {
+                    method: 'PUT',
+                    body: JSON.stringify(this.invoiceSettingsDraft),
+                });
+                this.invoiceSettings = { ...createDefaultInvoiceSettings(), ...saved };
+                this.invoiceSettingsDraft = { ...this.invoiceSettings };
+                this.showToast('Paramètres de facturation enregistrés.');
+            } catch (error) {
+                console.error('Unable to save invoice settings.', error);
+                this.showToast('Sauvegarde des paramètres impossible.');
+            }
+        },
+
+        onInvoiceLogoFileChange(event) {
+            const file = event.target.files?.[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                this.invoiceSettingsDraft.logoImage = String(reader.result || '');
+                this.invoiceSettingsDraft.logoMode = 'image';
+            };
+            reader.readAsDataURL(file);
+        },
+
+        openInvoiceModal() {
+            this.editingInvoiceId = null;
+            this.invoiceForm = createDefaultInvoiceForm(this.invoiceSettings);
+            this.openModal('invoiceModal');
+        },
+
+        startEditInvoice(invoice) {
+            this.editingInvoiceId = invoice.id;
+            this.invoiceForm = {
+                number: invoice.number,
+                clientId: invoice.clientId,
+                issueDate: invoice.issueDate,
+                dueDate: invoice.dueDate,
+                status: invoice.status,
+                currency: invoice.currency,
+                notes: invoice.notes || '',
+                adjustment: invoice.adjustment || 0,
+                discountAmount: invoice.discountAmount || invoice.totals?.discount || 0,
+                taxRate: invoice.taxRate || 0,
+                items: (invoice.items || []).map(item => ({
+                    description: item.description,
+                    quantity: item.quantity,
+                    unitPrice: item.unitPrice,
+                })),
+            };
+            if (!this.invoiceForm.items.length) {
+                this.invoiceForm.items = [createEmptyInvoiceItem()];
+            }
+            this.openModal('invoiceModal');
+        },
+
+        openInvoicePreview(invoice) {
+            this.previewInvoiceId = invoice.id;
+            this.openModal('invoicePreviewModal');
+        },
+
+        addInvoiceLine() {
+            this.invoiceForm.items.push(createEmptyInvoiceItem());
+        },
+
+        removeInvoiceLine(index) {
+            if (this.invoiceForm.items.length <= 1) return;
+            this.invoiceForm.items.splice(index, 1);
+        },
+
+        invoiceLineAmount(item) {
+            return Math.round((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0) * 100) / 100;
+        },
+
+        async submitInvoice() {
+            if (!this.invoiceForm.clientId) {
+                this.showToast('Sélectionnez un client.');
+                return;
+            }
+            const items = this.invoiceForm.items
+                .map((item, index) => ({
+                    description: (item.description || '').trim(),
+                    quantity: Number(item.quantity) || 0,
+                    unitPrice: Number(item.unitPrice) || 0,
+                    sortOrder: index,
+                }))
+                .filter(item => item.description);
+            if (!items.length) {
+                this.showToast('Ajoutez au moins une ligne de facture.');
+                return;
+            }
+
+            const payload = {
+                number: this.invoiceForm.number || null,
+                clientId: Number(this.invoiceForm.clientId),
+                issueDate: this.invoiceForm.issueDate,
+                dueDate: this.invoiceForm.dueDate,
+                status: this.invoiceForm.status,
+                currency: this.invoiceForm.currency,
+                notes: this.invoiceForm.notes,
+                adjustment: Number(this.invoiceForm.adjustment) || 0,
+                discountAmount: Number(this.invoiceForm.discountAmount) || 0,
+                taxRate: Number(this.invoiceForm.taxRate) || 0,
+                items,
+            };
+
+            try {
+                if (this.editingInvoiceId) {
+                    await this.apiRequest(`/invoices/${this.editingInvoiceId}`, {
+                        method: 'PUT',
+                        body: JSON.stringify(payload),
+                    });
+                    this.showToast('Facture mise à jour.');
+                } else {
+                    await this.apiRequest('/invoices', {
+                        method: 'POST',
+                        body: JSON.stringify(payload),
+                    });
+                    this.showToast('Facture créée.');
+                }
+                await this.loadInvoices();
+                this.closeModal();
+            } catch (error) {
+                console.error('Unable to save invoice.', error);
+                this.showToast(error.message || 'Sauvegarde de la facture impossible.');
+            }
+        },
+
+        async deleteInvoice(id) {
+            if (!confirm('Supprimer cette facture ?')) return;
+            try {
+                await this.apiRequest(`/invoices/${id}`, { method: 'DELETE' });
+                this.invoices = this.invoices.filter(invoice => invoice.id !== id);
+                if (this.previewInvoiceId === id) this.closeModal();
+                this.showToast('Facture supprimée.');
+            } catch (error) {
+                console.error('Unable to delete invoice.', error);
+                this.showToast('Suppression impossible.');
+            }
+        },
+
+        async exportInvoice(invoiceId, format) {
+            const path = format === 'pdf'
+                ? `/invoices/${invoiceId}/export.pdf`
+                : `/invoices/${invoiceId}/export.xlsx`;
+            try {
+                const response = await fetch(`${this.apiBase}${path}`);
+                if (!response.ok) throw new Error('Export failed');
+                const blob = await response.blob();
+                const invoice = this.invoices.find(item => item.id === invoiceId);
+                const extension = format === 'pdf' ? 'pdf' : 'xlsx';
+                const filename = `invoice-${invoice?.number || invoiceId}.${extension}`;
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = filename;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(url);
+                this.showToast(`Export ${format.toUpperCase()} téléchargé.`);
+            } catch (error) {
+                console.error('Unable to export invoice.', error);
+                this.showToast('Export impossible.');
+            }
+        },
+
+        formatInvoiceMoney,
+        formatInvoiceDate,
+        invoiceStatusLabel,
+        invoiceLabels,
+        invoiceStatusClass(status) {
+            if (status === 'paid') return 'badge-active';
+            if (status === 'cancelled') return 'badge-danger';
+            if (status === 'sent') return 'badge-pending';
+            return 'badge-pending';
         },
 
         async loadState() {
@@ -699,6 +1098,10 @@ createApp({
                 this.isAuthenticated = true;
                 this.loginError = '';
                 this.loginForm = { username: '', password: '' };
+                if (this.features.invoices) {
+                    await this.loadInvoices();
+                    await this.loadInvoiceSettings();
+                }
                 this.showToast('Connexion réussie.');
                 return;
             } catch (error) {
@@ -722,14 +1125,21 @@ createApp({
         },
 
         navigate(page) {
+            if (page === 'invoices' && !this.features.invoices) return;
             this.currentPage = page;
             this.notificationsOpen = false;
             if (window.innerWidth <= 768) this.sidebarOpen = false;
             if (page === 'parametres') {
                 this.notifDaysDraft = String(this.notifSettings.daysBeforeIntervention);
+                if (this.features.invoices) {
+                    this.invoiceSettingsDraft = { ...this.invoiceSettings };
+                }
             }
             if (page === 'interventions') {
                 this.interventionPage = 1;
+            }
+            if (page === 'invoices' && this.features.invoices) {
+                this.loadInvoices();
             }
         },
 
@@ -760,6 +1170,7 @@ createApp({
         closeModal() {
             this.activeModal = null;
             this.selectedContractId = null;
+            this.previewInvoiceId = null;
         },
 
         toggleNotifications() {
