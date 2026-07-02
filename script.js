@@ -7,7 +7,7 @@ const STORAGE_KEY = 'plombtrack-storage-v2';
 const AUTH_KEY = 'plombtrack-auth-v1';
 const API_BASE = window.location.protocol === 'file:' ? 'http://127.0.0.1:8000/api' : '/api';
 const INTERVENTION_STATUSES = ['Planifié', 'En cours', 'Terminé', 'Annulé'];
-const INTERVENTION_TYPES = { CHAUDIERE: 'chaudiere', BRULEUR: 'bruleur' };
+const INTERVENTION_TYPES = { CHAUDIERE: 'chaudiere', BRULEUR: 'bruleur', CHAUDIERE_BRULEUR: 'chaudiere_bruleur' };
 const CURRENT_DATA_YEAR = 2026;
 
 function parseInterventionSequence(id) {
@@ -76,7 +76,15 @@ function serializeContractQuotas(contract) {
 function interventionTypeLabel(type) {
     if (type === INTERVENTION_TYPES.BRULEUR) return 'Brûleur';
     if (type === INTERVENTION_TYPES.CHAUDIERE) return 'Chaudière';
+    if (type === INTERVENTION_TYPES.CHAUDIERE_BRULEUR) return 'Chaudière et Brûleur';
     return '—';
+}
+
+function interventionTypeRowClass(type) {
+    if (type === INTERVENTION_TYPES.BRULEUR) return 'intervention-row-bruleur';
+    if (type === INTERVENTION_TYPES.CHAUDIERE) return 'intervention-row-chaudiere';
+    if (type === INTERVENTION_TYPES.CHAUDIERE_BRULEUR) return 'intervention-row-chaudiere-bruleur';
+    return '';
 }
 
 function defaultInterventionFilterRange(year = new Date().getFullYear()) {
@@ -240,6 +248,7 @@ function createDefaultInvoiceSettings() {
         logoMode: 'text',
         logoText: 'Ets Bellal Salim',
         logoImage: '',
+        cachetImage: '',
         invoiceLanguage: 'fr',
         defaultTaxRate: 20,
         currency: 'DZD',
@@ -259,6 +268,7 @@ function createDefaultInvoiceForm(settings = {}) {
     return {
         number: '',
         clientId: '',
+        documentType: 'facture',
         issueDate: today,
         dueDate: due.toISOString().slice(0, 10),
         status: 'draft',
@@ -268,6 +278,8 @@ function createDefaultInvoiceForm(settings = {}) {
         discountAmount: 0,
         taxRate: Number(settings.defaultTaxRate) || 0,
         items: [createEmptyInvoiceItem()],
+        clientNif: '',
+        includeCachet: false,
     };
 }
 
@@ -290,11 +302,14 @@ function computeInvoiceTotals(items, adjustment, taxRate, discountAmount = 0) {
 const INVOICE_LABELS = {
     en: {
         title: 'Invoice',
+        proformaTitle: 'Proforma',
         invoiceNumber: 'Invoice Number:',
+        proformaNumber: 'Proforma Number:',
         issueDate: 'Date of Issue:',
         dueDate: 'Date Due:',
         seller: 'From:',
         billTo: 'Bill To:',
+        client: 'Client:',
         description: 'Description',
         quantity: 'Qty',
         unitPrice: 'Unit price',
@@ -312,11 +327,14 @@ const INVOICE_LABELS = {
     },
     fr: {
         title: 'Facture',
+        proformaTitle: 'Proforma',
         invoiceNumber: 'Numéro de facture :',
+        proformaNumber: 'Numéro proforma :',
         issueDate: "Date d'émission :",
         dueDate: "Date d'échéance :",
         seller: 'Émetteur :',
         billTo: 'Facturé à :',
+        client: 'Client :',
         description: 'Description',
         quantity: 'Qté',
         unitPrice: 'Prix unitaire',
@@ -333,6 +351,22 @@ const INVOICE_LABELS = {
         rip: 'RIP :',
     },
 };
+
+function invoiceDocumentLabels(language, documentType = 'facture') {
+    const labels = invoiceLabels(language);
+    if ((documentType || 'facture').toLowerCase() === 'proforma') {
+        return {
+            ...labels,
+            title: labels.proformaTitle || 'Proforma',
+            invoiceNumber: labels.proformaNumber || labels.invoiceNumber,
+        };
+    }
+    return labels;
+}
+
+function invoiceDocumentTypeLabel(documentType) {
+    return (documentType || 'facture').toLowerCase() === 'proforma' ? 'Proforma' : 'Facture';
+}
 
 function invoiceLabels(language = 'fr') {
     return INVOICE_LABELS[language] || INVOICE_LABELS.fr;
@@ -377,6 +411,7 @@ createApp({
             notificationsOpen: false,
             interventionView: 'list',
             interventionFilterType: '',
+            interventionFilterClient: '',
             interventionFilterStart: defaultInterventionFilterRange().start,
             interventionFilterEnd: defaultInterventionFilterRange().end,
             interventionPage: 1,
@@ -406,7 +441,7 @@ createApp({
             editingInterventionId: null,
             selectedContractId: null,
 
-            clientForm: { company: '', contact: '', phone: '', email: '', address: '' },
+            clientForm: { company: '', contact: '', phone: '', email: '', address: '', nif: '' },
             contractForm: {
                 name: '',
                 client: '',
@@ -472,6 +507,13 @@ createApp({
             if (this.interventionFilterType) {
                 items = items.filter(intervention =>
                     (intervention.type || INTERVENTION_TYPES.CHAUDIERE) === this.interventionFilterType
+                );
+            }
+
+            const clientQuery = this.interventionFilterClient.trim().toLowerCase();
+            if (clientQuery) {
+                items = items.filter(intervention =>
+                    (intervention.client || '').toLowerCase().includes(clientQuery)
                 );
             }
 
@@ -595,8 +637,18 @@ createApp({
             return this.previewInvoice?.client || this.clients.find(c => c.id === Number(this.invoiceForm.clientId)) || null;
         },
 
+        selectedInvoiceClient() {
+            if (!this.invoiceForm.clientId) return null;
+            return this.clients.find(c => c.id === Number(this.invoiceForm.clientId)) || null;
+        },
+
         invoiceText() {
-            return invoiceLabels(this.invoiceSettings.invoiceLanguage);
+            const documentType = this.previewInvoice?.documentType || this.invoiceForm.documentType || 'facture';
+            return invoiceDocumentLabels(this.invoiceSettings.invoiceLanguage, documentType);
+        },
+
+        previewDocumentTitle() {
+            return invoiceDocumentTypeLabel(this.previewInvoice?.documentType);
         },
     },
 
@@ -638,12 +690,25 @@ createApp({
             this.interventionPage = 1;
         },
 
+        interventionFilterClient() {
+            this.interventionPage = 1;
+        },
+
         interventionFilterStart() {
             this.interventionPage = 1;
         },
 
         interventionFilterEnd() {
             this.interventionPage = 1;
+        },
+
+        'invoiceForm.clientId'(clientId) {
+            if (!clientId) {
+                this.invoiceForm.clientNif = '';
+                return;
+            }
+            const client = this.clients.find(c => c.id === Number(clientId));
+            this.invoiceForm.clientNif = client?.nif || '';
         },
 
         interventionTotalPages(total) {
@@ -739,10 +804,41 @@ createApp({
             reader.readAsDataURL(file);
         },
 
+        onInvoiceCachetFileChange(event) {
+            const file = event.target.files?.[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                this.invoiceSettingsDraft.cachetImage = String(reader.result || '');
+            };
+            reader.readAsDataURL(file);
+        },
+
+        removeInvoiceCachet() {
+            this.invoiceSettingsDraft.cachetImage = '';
+            if (this.invoiceForm.includeCachet) {
+                this.invoiceForm.includeCachet = false;
+            }
+        },
+
         openInvoiceModal() {
             this.editingInvoiceId = null;
             this.invoiceForm = createDefaultInvoiceForm(this.invoiceSettings);
             this.openModal('invoiceModal');
+        },
+
+        onInvoiceDocumentTypeChange() {
+            if ((this.invoiceForm.documentType || 'facture').toLowerCase() === 'proforma') {
+                this.invoiceForm.dueDate = '';
+                if (this.invoiceForm.clientId) {
+                    const client = this.clients.find(c => c.id === Number(this.invoiceForm.clientId));
+                    this.invoiceForm.clientNif = client?.nif || '';
+                }
+            } else if (!this.invoiceForm.dueDate) {
+                const due = new Date(this.invoiceForm.issueDate || new Date());
+                due.setDate(due.getDate() + (Number(this.invoiceSettings.paymentTermsDays) || 7));
+                this.invoiceForm.dueDate = due.toISOString().slice(0, 10);
+            }
         },
 
         startEditInvoice(invoice) {
@@ -750,6 +846,7 @@ createApp({
             this.invoiceForm = {
                 number: invoice.number,
                 clientId: invoice.clientId,
+                documentType: invoice.documentType || 'facture',
                 issueDate: invoice.issueDate,
                 dueDate: invoice.dueDate,
                 status: invoice.status,
@@ -758,6 +855,8 @@ createApp({
                 adjustment: invoice.adjustment || 0,
                 discountAmount: invoice.discountAmount || invoice.totals?.discount || 0,
                 taxRate: invoice.taxRate || 0,
+                clientNif: invoice.client?.nif || '',
+                includeCachet: Boolean(invoice.includeCachet),
                 items: (invoice.items || []).map(item => ({
                     description: item.description,
                     quantity: item.quantity,
@@ -788,6 +887,30 @@ createApp({
             return Math.round((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0) * 100) / 100;
         },
 
+        async saveInvoiceClientNif() {
+            const clientId = Number(this.invoiceForm.clientId);
+            if (!clientId) return;
+
+            const nif = (this.invoiceForm.clientNif || '').trim();
+            const client = this.clients.find(c => c.id === clientId);
+            if (!client || client.nif === nif) return;
+
+            this.clients = this.clients.map(c => (c.id === clientId ? { ...c, nif } : c));
+            const state = {
+                clients: this.clients,
+                contracts: this.contracts,
+                interventions: this.interventions,
+                notifSettings: this.notifSettings,
+                notifReadStatus: this.notifReadStatus,
+            };
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            const saved = await this.apiRequest('/state', {
+                method: 'PUT',
+                body: JSON.stringify(state),
+            });
+            this.clients = saved.clients.map(client => this.normalizeClient(client));
+        },
+
         async submitInvoice() {
             if (!this.invoiceForm.clientId) {
                 this.showToast('Sélectionnez un client.');
@@ -806,21 +929,27 @@ createApp({
                 return;
             }
 
+            const isProforma = (this.invoiceForm.documentType || 'facture').toLowerCase() === 'proforma';
             const payload = {
                 number: this.invoiceForm.number || null,
                 clientId: Number(this.invoiceForm.clientId),
+                documentType: this.invoiceForm.documentType || 'facture',
                 issueDate: this.invoiceForm.issueDate,
-                dueDate: this.invoiceForm.dueDate,
+                dueDate: isProforma ? '' : this.invoiceForm.dueDate,
                 status: this.invoiceForm.status,
                 currency: this.invoiceForm.currency,
                 notes: this.invoiceForm.notes,
                 adjustment: Number(this.invoiceForm.adjustment) || 0,
                 discountAmount: Number(this.invoiceForm.discountAmount) || 0,
                 taxRate: Number(this.invoiceForm.taxRate) || 0,
+                includeCachet: Boolean(this.invoiceForm.includeCachet),
                 items,
             };
 
             try {
+                if (isProforma) {
+                    await this.saveInvoiceClientNif();
+                }
                 if (this.editingInvoiceId) {
                     await this.apiRequest(`/invoices/${this.editingInvoiceId}`, {
                         method: 'PUT',
@@ -884,6 +1013,7 @@ createApp({
         formatInvoiceMoney,
         formatInvoiceDate,
         invoiceStatusLabel,
+        invoiceDocumentTypeLabel,
         invoiceLabels,
         invoiceStatusClass(status) {
             if (status === 'paid') return 'badge-active';
@@ -980,6 +1110,7 @@ createApp({
                 phone: client.phone || '',
                 email: client.email || '',
                 address: client.address || '',
+                nif: client.nif || '',
             };
         },
 
@@ -1230,7 +1361,7 @@ createApp({
 
         openClientModal() {
             this.editingClientId = null;
-            this.clientForm = { company: '', contact: '', phone: '', email: '', address: '' };
+            this.clientForm = { company: '', contact: '', phone: '', email: '', address: '', nif: '' };
             this.openModal('clientModal');
         },
 
@@ -1417,7 +1548,7 @@ createApp({
                 : (existing?.type || INTERVENTION_TYPES.CHAUDIERE);
 
             if (!existing?.contractId && !resolvedType) {
-                this.showToast('Sélectionnez un type d\'intervention (Chaudière ou Brûleur).');
+                this.showToast('Sélectionnez un type d\'intervention (Chaudière, Brûleur ou Chaudière et Brûleur).');
                 return;
             }
 
@@ -1493,6 +1624,10 @@ createApp({
 
         interventionTypeLabel(type) {
             return interventionTypeLabel(type);
+        },
+
+        interventionTypeRowClass(type) {
+            return interventionTypeRowClass(type || INTERVENTION_TYPES.CHAUDIERE);
         },
 
         interventionsByMonth() {
@@ -1620,8 +1755,9 @@ createApp({
 
         interventionTypeOptions() {
             return [
-                { value: INTERVENTION_TYPES.CHAUDIERE, label: 'Chaudière' },
                 { value: INTERVENTION_TYPES.BRULEUR, label: 'Brûleur' },
+                { value: INTERVENTION_TYPES.CHAUDIERE, label: 'Chaudière' },
+                { value: INTERVENTION_TYPES.CHAUDIERE_BRULEUR, label: 'Chaudière et Brûleur' },
             ];
         },
     },

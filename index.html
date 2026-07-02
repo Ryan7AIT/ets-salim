@@ -318,6 +318,16 @@
                         <div class="card" v-show="interventionView === 'list'">
                             <div class="table-controls intervention-filters">
                                 <div class="intervention-filters-fields">
+                                    <div class="form-group filter-field filter-field-client">
+                                        <label>Client</label>
+                                        <input type="search" v-model="interventionFilterClient"
+                                            placeholder="Rechercher un client..." list="intervention-client-options"
+                                            autocomplete="off">
+                                        <datalist id="intervention-client-options">
+                                            <option v-for="client in clients" :key="client.id" :value="client.company">
+                                            </option>
+                                        </datalist>
+                                    </div>
                                     <div class="form-group filter-field">
                                         <label>Type</label>
                                         <select v-model="interventionFilterType">
@@ -356,9 +366,15 @@
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        <tr v-for="i in paginatedInterventions" :key="i.id">
+                                        <tr v-for="i in paginatedInterventions" :key="i.id"
+                                            :class="interventionTypeRowClass(i.type)">
                                             <td>#{{ i.id }}</td>
-                                            <td>{{ interventionTypeLabel(i.type) }}</td>
+                                            <td>
+                                                <span class="intervention-type-badge"
+                                                    :class="interventionTypeRowClass(i.type)">
+                                                    {{ interventionTypeLabel(i.type) }}
+                                                </span>
+                                            </td>
                                             <td>{{ i.client }}</td>
                                             <td>{{ i.date }}</td>
                                             <td><span :style="{ color: priorityColor(i.priority) }">{{ i.priority
@@ -416,7 +432,7 @@
                                         placeholder="Rechercher par numéro, client ou statut...">
                                 </div>
                                 <button class="primary-btn" @click="openInvoiceModal()">
-                                    <i class="fas fa-plus"></i> Nouvelle Facture
+                                    <i class="fas fa-plus"></i> Nouveau document
                                 </button>
                             </div>
                             <div class="table-responsive">
@@ -424,6 +440,7 @@
                                     <thead>
                                         <tr>
                                             <th>N°</th>
+                                            <th>Type</th>
                                             <th>Client</th>
                                             <th>Émission</th>
                                             <th>Échéance</th>
@@ -435,9 +452,10 @@
                                     <tbody>
                                         <tr v-for="invoice in filteredInvoices" :key="invoice.id">
                                             <td><strong>{{ invoice.number }}</strong></td>
+                                            <td>{{ invoiceDocumentTypeLabel(invoice.documentType) }}</td>
                                             <td>{{ invoice.client?.company || '—' }}</td>
                                             <td>{{ formatInvoiceDate(invoice.issueDate) }}</td>
-                                            <td>{{ formatInvoiceDate(invoice.dueDate) }}</td>
+                                            <td>{{ invoice.documentType === 'proforma' ? '—' : formatInvoiceDate(invoice.dueDate) }}</td>
                                             <td>
                                                 <span class="badge" :class="invoiceStatusClass(invoice.status)">
                                                     {{ invoiceStatusLabel(invoice.status) }}
@@ -466,7 +484,7 @@
                                             </td>
                                         </tr>
                                         <tr v-if="filteredInvoices.length === 0">
-                                            <td colspan="7"
+                                            <td colspan="8"
                                                 style="text-align:center;color:var(--text-muted);padding:32px">
                                                 Aucune facture trouvée.</td>
                                         </tr>
@@ -622,6 +640,15 @@
                                 </div>
                             </div>
                             <div class="form-group">
+                                <label>Cachet</label>
+                                <input type="file" accept="image/*" @change="onInvoiceCachetFileChange($event)">
+                                <div v-if="invoiceSettingsDraft.cachetImage" class="cachet-image-preview">
+                                    <img :src="invoiceSettingsDraft.cachetImage" alt="Cachet preview">
+                                    <button type="button" class="text-btn" @click="removeInvoiceCachet()">Supprimer le cachet</button>
+                                </div>
+                                <p class="field-hint">Image du cachet affichée sous le total, en bas à droite, lorsque l'option est cochée.</p>
+                            </div>
+                            <div class="form-group">
                                 <label>Notes de pied de page</label>
                                 <textarea rows="2" v-model="invoiceSettingsDraft.footerNotes"
                                     placeholder="Conditions de paiement, mentions légales..."></textarea>
@@ -669,6 +696,10 @@
                 <div class="form-group">
                     <label>Adresse</label>
                     <textarea rows="2" v-model="clientForm.address"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>NIF</label>
+                    <input type="text" v-model="clientForm.nif" placeholder="Numéro d'identification fiscale (optionnel)">
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="secondary-btn" @click="closeModal()">Annuler</button>
@@ -804,6 +835,16 @@
                         <p v-if="!contractInterventionsByType(selectedContract.id, 'bruleur').length" class="planning-hint">Aucune intervention brûleur planifiée.</p>
                     </div>
                 </div>
+                <div class="schedule-block">
+                    <div class="card-header"><h4>Planning — Chaudière et Brûleur</h4></div>
+                    <div class="schedule-list">
+                        <div class="schedule-item" v-for="item in contractInterventionsByType(selectedContract.id, 'chaudiere_bruleur')" :key="item.id">
+                            <div><strong>{{ item.date }}</strong><p>#{{ item.id }}</p></div>
+                            <span class="badge" :class="statusClass(item.status)">{{ item.status }}</span>
+                        </div>
+                        <p v-if="!contractInterventionsByType(selectedContract.id, 'chaudiere_bruleur').length" class="planning-hint">Aucune intervention chaudière et brûleur planifiée.</p>
+                    </div>
+                </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="secondary-btn"
@@ -887,11 +928,18 @@
         <!-- Modal Facture -->
         <div class="modal modal-wide" v-show="activeModal === 'invoiceModal'">
             <div class="modal-header">
-                <h3>{{ editingInvoiceId ? 'Modifier la Facture' : 'Nouvelle Facture' }}</h3>
+                <h3>{{ editingInvoiceId ? 'Modifier le document' : 'Nouveau document' }}</h3>
                 <button class="close-modal" @click="closeModal()">&times;</button>
             </div>
             <form class="modal-body invoice-form-body" @submit.prevent="submitInvoice()">
                 <div class="form-row">
+                    <div class="form-group">
+                        <label>Type de document</label>
+                        <select v-model="invoiceForm.documentType" @change="onInvoiceDocumentTypeChange()">
+                            <option value="facture">Facture</option>
+                            <option value="proforma">Proforma</option>
+                        </select>
+                    </div>
                     <div class="form-group">
                         <label>Client</label>
                         <select v-model="invoiceForm.clientId" required>
@@ -909,7 +957,7 @@
                         <label>Date d'émission</label>
                         <input type="date" v-model="invoiceForm.issueDate" required>
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" v-if="invoiceForm.documentType !== 'proforma'">
                         <label>Date d'échéance</label>
                         <input type="date" v-model="invoiceForm.dueDate">
                     </div>
@@ -921,6 +969,24 @@
                             <option value="paid">Payée</option>
                             <option value="cancelled">Annulée</option>
                         </select>
+                    </div>
+                </div>
+
+                <div v-if="invoiceForm.documentType === 'proforma' && selectedInvoiceClient" class="proforma-client-panel">
+                    <div class="proforma-client-panel-header">
+                        <i class="fas fa-building"></i>
+                        <span>Client sur le proforma</span>
+                    </div>
+                    <div class="proforma-client-panel-body">
+                        <div class="proforma-client-field">
+                            <span class="proforma-client-field-label">Raison sociale</span>
+                            <strong class="proforma-client-company">{{ selectedInvoiceClient.company }}</strong>
+                        </div>
+                        <div class="form-group proforma-client-nif-field">
+                            <label>NIF</label>
+                            <input type="text" v-model="invoiceForm.clientNif"
+                                placeholder="Numéro d'identification fiscale du client">
+                        </div>
                     </div>
                 </div>
 
@@ -986,6 +1052,16 @@
                     <textarea rows="2" v-model="invoiceForm.notes" placeholder="Notes affichées sur la facture..."></textarea>
                 </div>
 
+                <div class="form-group invoice-cachet-option">
+                    <label class="checkbox-chip">
+                        <input type="checkbox" v-model="invoiceForm.includeCachet" :disabled="!invoiceSettings.cachetImage">
+                        Inclure le cachet (sous le total, en bas à droite)
+                    </label>
+                    <p v-if="!invoiceSettings.cachetImage" class="field-hint">
+                        Importez votre cachet dans Paramètres → Facturation pour l'utiliser sur vos documents.
+                    </p>
+                </div>
+
                 <div class="invoice-totals-summary">
                     <div><span>Sous-total</span><strong>{{ formatInvoiceMoney(invoiceFormTotals.subtotal, invoiceForm.currency) }}</strong></div>
                     <div><span>Ajustements</span><strong>{{ formatInvoiceMoney(invoiceFormTotals.adjustment, invoiceForm.currency) }}</strong></div>
@@ -1006,7 +1082,7 @@
         <div class="modal modal-wide invoice-preview-modal" v-if="activeModal === 'invoicePreviewModal' && previewInvoice">
             <div class="modal-header">
                 <div>
-                    <h3>Facture {{ previewInvoice.number }}</h3>
+                    <h3>{{ previewDocumentTitle }} {{ previewInvoice.number }}</h3>
                     <p class="modal-subtitle">{{ previewInvoice.client?.company }}</p>
                 </div>
                 <button class="close-modal" @click="closeModal()">&times;</button>
@@ -1022,15 +1098,17 @@
                             </div>
                         </div>
                         <div class="invoice-doc-meta">
-                            <p class="invoice-meta-number">
-                                <strong>{{ invoiceText.invoiceNumber }}</strong> {{ previewInvoice.number }}
-                            </p>
-                            <p class="invoice-meta-dates">
-                                <span><strong>{{ invoiceText.issueDate }}</strong> {{ formatInvoiceDate(previewInvoice.issueDate) }}</span>
-                                <span class="invoice-meta-sep">|</span>
-                                <span><strong>{{ invoiceText.dueDate }}</strong> {{ formatInvoiceDate(previewInvoice.dueDate) }}</span>
-                            </p>
-                        </div>
+                                <p class="invoice-meta-number">
+                                    <strong>{{ invoiceText.invoiceNumber }}</strong> {{ previewInvoice.number }}
+                                </p>
+                                <p class="invoice-meta-dates">
+                                    <span><strong>{{ invoiceText.issueDate }}</strong> {{ formatInvoiceDate(previewInvoice.issueDate) }}</span>
+                                    <template v-if="previewInvoice.documentType !== 'proforma'">
+                                        <span class="invoice-meta-sep">|</span>
+                                        <span><strong>{{ invoiceText.dueDate }}</strong> {{ formatInvoiceDate(previewInvoice.dueDate) }}</span>
+                                    </template>
+                                </p>
+                            </div>
                     </div>
                     <div class="invoice-doc-addresses">
                         <div>
@@ -1046,12 +1124,18 @@
                             </p>
                             <p v-if="invoiceSettings.rip">{{ invoiceText.rip }} {{ invoiceSettings.rip }}</p>
                         </div>
-                        <div>
+                        <div v-if="previewInvoice.documentType === 'proforma'">
+                            <p class="address-label">{{ invoiceText.client }}</p>
+                            <p><strong>{{ previewInvoice.client?.company }}</strong></p>
+                            <p v-if="previewInvoice.client?.nif">{{ invoiceText.nif }} {{ previewInvoice.client.nif }}</p>
+                        </div>
+                        <div v-else>
                             <p class="address-label">{{ invoiceText.billTo }}</p>
                             <p>C{{ String(previewInvoice.client?.id || '').padStart(3, '0') }} - {{ previewInvoice.client?.company }}</p>
                             <p>{{ previewInvoice.client?.contact }}</p>
                             <p>{{ previewInvoice.client?.address }}</p>
                             <p>{{ previewInvoice.client?.email }}</p>
+                            <p v-if="previewInvoice.client?.nif">{{ invoiceText.nif }} {{ previewInvoice.client.nif }}</p>
                         </div>
                     </div>
                     <table class="invoice-doc-table">
@@ -1077,13 +1161,17 @@
                             <p><strong>{{ invoiceText.notes }}</strong></p>
                             <p>{{ previewInvoice.notes || invoiceSettings.footerNotes || '—' }}</p>
                         </div>
-                        <div class="invoice-doc-totals">
-                            <div><span>{{ invoiceText.subtotal }}</span><strong>{{ formatInvoiceMoney(previewInvoice.totals?.subtotal, previewInvoice.currency) }}</strong></div>
-                            <div><span>{{ invoiceText.adjustments }}</span><strong>{{ formatInvoiceMoney(previewInvoice.totals?.adjustment, previewInvoice.currency) }}</strong></div>
-                            <div><span>{{ invoiceText.discount }}</span><strong>-{{ formatInvoiceMoney(previewInvoice.totals?.discount, previewInvoice.currency) }}</strong></div>
-                            <div><span>{{ invoiceText.adjustedSubtotal }}</span><strong>{{ formatInvoiceMoney(previewInvoice.totals?.taxableSubtotal, previewInvoice.currency) }}</strong></div>
-                            <div><span>{{ invoiceText.tax }} ({{ previewInvoice.taxRate }}%)</span><strong>{{ formatInvoiceMoney(previewInvoice.totals?.tax, previewInvoice.currency) }}</strong></div>
-                            <div class="total-row"><span>{{ invoiceText.total }}</span><strong>{{ formatInvoiceMoney(previewInvoice.totals?.total, previewInvoice.currency) }}</strong></div>
+                        <div class="invoice-doc-totals-wrap">
+                            <div class="invoice-doc-totals">
+                                <div><span>{{ invoiceText.subtotal }}</span><strong>{{ formatInvoiceMoney(previewInvoice.totals?.subtotal, previewInvoice.currency) }}</strong></div>
+                                <div><span>{{ invoiceText.adjustments }}</span><strong>{{ formatInvoiceMoney(previewInvoice.totals?.adjustment, previewInvoice.currency) }}</strong></div>
+                                <div><span>{{ invoiceText.discount }}</span><strong>-{{ formatInvoiceMoney(previewInvoice.totals?.discount, previewInvoice.currency) }}</strong></div>
+                                <div><span>{{ invoiceText.adjustedSubtotal }}</span><strong>{{ formatInvoiceMoney(previewInvoice.totals?.taxableSubtotal, previewInvoice.currency) }}</strong></div>
+                                <div><span>{{ invoiceText.tax }} ({{ previewInvoice.taxRate }}%)</span><strong>{{ formatInvoiceMoney(previewInvoice.totals?.tax, previewInvoice.currency) }}</strong></div>
+                                <div class="total-row"><span>{{ invoiceText.total }}</span><strong>{{ formatInvoiceMoney(previewInvoice.totals?.total, previewInvoice.currency) }}</strong></div>
+                            </div>
+                            <img v-if="previewInvoice.includeCachet && invoiceSettings.cachetImage"
+                                class="invoice-doc-cachet" :src="invoiceSettings.cachetImage" alt="Cachet">
                         </div>
                     </div>
                 </div>

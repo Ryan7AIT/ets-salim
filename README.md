@@ -6,7 +6,7 @@ Application web de gestion pour **Ets Bellal Salim** : clients, contrats, interv
 
 ### Cœur de l'application
 - **Tableau de bord** — statistiques, graphiques, prochaines interventions
-- **Clients** — fiche société, contact, téléphone, email, adresse
+- **Clients** — fiche société, contact, téléphone, email, adresse, **NIF** (optionnel)
 - **Contrats** — maintenance chaudière / brûleur, période, statut, suivi d'avancement
 - **Interventions** — planification, filtres, pagination, statuts
 - **Paramètres** — délai de notification avant intervention
@@ -18,10 +18,13 @@ Application web de gestion pour **Ets Bellal Salim** : clients, contrats, interv
 ### Module Factures (optionnel)
 Activé uniquement si `INVOICES_ENABLED=true` dans `.env`.
 
-- Création / modification / suppression de factures liées à un **client** (`client_id`)
+- Création / modification / suppression de **factures** ou **proformas** liées à un **client** (`client_id`)
+- Type de document : **Facture** (avec date d'échéance et bloc « Facturé à ») ou **Proforma** (sans date d'échéance, bloc **Client** avec raison sociale et NIF uniquement)
 - Lignes de facture : description, quantité, prix unitaire
 - Totaux : sous-total, ajustements, **remise**, TVA, total
-- Paramètres entreprise : logo (texte ou image), adresse, NIF, N° d'immatriculation, **RIP**
+- **NIF client** — champ optionnel sur la fiche client, affiché sur les factures (bloc « Facturé à »)
+- Paramètres entreprise : logo (texte ou image), **cachet** (image), adresse, NIF, N° d'immatriculation, **RIP**
+- Option par document : cocher **Inclure le cachet** pour l'afficher sous le total, en bas à droite (facture ou proforma)
 - Langue des exports : **français** ou **anglais**
 - Export **PDF** et **Excel**
 
@@ -103,11 +106,12 @@ Changez ce mot de passe en production.
    - Informations entreprise (nom, adresse, email, téléphone)
    - NIF, N° d'immatriculation, RIP (optionnels — affichés seulement si renseignés)
    - Logo texte ou image importée
+   - Cachet (image importée) — activable par document via une case à cocher
    - Langue des factures (FR / EN), devise, TVA par défaut, délai d'échéance
-3. Créer une facture dans **Factures**, choisir un client, ajouter les lignes.
+3. Créer une facture ou une proforma dans **Factures** : choisir le type, le client, ajouter les lignes.
 4. Exporter en **PDF** ou **Excel** depuis la liste ou l'aperçu.
 
-Chaque facture est stockée en base et liée à un client existant via `clients.id`.
+Chaque document est stocké en base et lié à un client existant via `clients.id`. Le **NIF client** se renseigne dans la fiche client (module Clients) et apparaît sur les factures exportées.
 
 ## Structure du projet
 

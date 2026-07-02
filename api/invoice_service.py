@@ -11,6 +11,7 @@ from typing import Any
 
 from fastapi import HTTPException
 from openpyxl import Workbook
+from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Font, PatternFill
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -39,6 +40,7 @@ DEFAULT_INVOICE_SETTINGS: dict[str, Any] = {
     "logoMode": "text",
     "logoText": "Ets Bellal Salim",
     "logoImage": "",
+    "cachetImage": "",
     "invoiceLanguage": "fr",
     "defaultTaxRate": 20,
     "currency": "DZD",
@@ -49,11 +51,14 @@ DEFAULT_INVOICE_SETTINGS: dict[str, Any] = {
 INVOICE_LABELS: dict[str, dict[str, str]] = {
     "en": {
         "title": "Invoice",
+        "proformaTitle": "Proforma",
         "invoiceNumber": "Invoice Number:",
+        "proformaNumber": "Proforma Number:",
         "issueDate": "Date of Issue:",
         "dueDate": "Date Due:",
         "seller": "From:",
         "billTo": "Bill To:",
+        "client": "Client:",
         "description": "Description",
         "quantity": "Qty",
         "unitPrice": "Unit price",
@@ -71,11 +76,14 @@ INVOICE_LABELS: dict[str, dict[str, str]] = {
     },
     "fr": {
         "title": "Facture",
+        "proformaTitle": "Proforma",
         "invoiceNumber": "Numéro de facture :",
+        "proformaNumber": "Numéro proforma :",
         "issueDate": "Date d'émission :",
         "dueDate": "Date d'échéance :",
         "seller": "Émetteur :",
         "billTo": "Facturé à :",
+        "client": "Client :",
         "description": "Description",
         "quantity": "Qté",
         "unitPrice": "Prix unitaire",
@@ -120,6 +128,21 @@ def default_invoice_settings() -> dict[str, Any]:
 def invoice_labels(settings: dict[str, Any]) -> dict[str, str]:
     language = (settings.get("invoiceLanguage") or "fr").lower()
     return INVOICE_LABELS.get(language, INVOICE_LABELS["fr"])
+
+
+def is_proforma(invoice: dict[str, Any]) -> bool:
+    return (invoice.get("documentType") or "facture").lower() == "proforma"
+
+
+def document_labels(invoice: dict[str, Any], settings: dict[str, Any]) -> dict[str, str]:
+    labels = invoice_labels(settings)
+    if is_proforma(invoice):
+        return {
+            **labels,
+            "title": labels.get("proformaTitle", "Proforma"),
+            "invoiceNumber": labels.get("proformaNumber", labels["invoiceNumber"]),
+        }
+    return labels
 
 
 def load_invoice_settings(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -241,11 +264,14 @@ def serialize_invoice_row(conn: sqlite3.Connection, row: sqlite3.Row, include_it
             "phone": client["phone"] or "",
             "email": client["email"] or "",
             "address": client["address"] or "",
+            "nif": client["nif"] or "",
         }
         if client
         else None,
         "issueDate": row["issue_date"],
         "dueDate": row["due_date"] or "",
+        "documentType": row["document_type"] if "document_type" in row.keys() else "facture",
+        "includeCachet": bool(row["include_cachet"]) if "include_cachet" in row.keys() else False,
         "status": row["status"],
         "currency": row["currency"],
         "notes": row["notes"] or "",
@@ -321,22 +347,29 @@ def create_invoice(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[st
     now = utc_now_iso()
     issue_date = payload.get("issueDate") or date.today().isoformat()
     settings = load_invoice_settings(conn)
+    document_type = (payload.get("documentType") or "facture").lower()
+    if document_type not in {"facture", "proforma"}:
+        document_type = "facture"
     due_date = payload.get("dueDate")
-    if not due_date:
+    if document_type == "proforma":
+        due_date = ""
+    elif not due_date:
         due_date = (date.fromisoformat(issue_date) + timedelta(days=int(settings.get("paymentTermsDays") or 7))).isoformat()
 
     number = (payload.get("number") or "").strip() or next_invoice_number(conn)
     cursor = conn.execute(
         """
         INSERT INTO invoices
-        (number, client_id, issue_date, due_date, status, currency, notes, adjustment, discount_amount, tax_rate, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (number, client_id, issue_date, due_date, document_type, include_cachet, status, currency, notes, adjustment, discount_amount, tax_rate, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             number,
             int(payload["clientId"]),
             issue_date,
             due_date,
+            document_type,
+            1 if payload.get("includeCachet") else 0,
             payload.get("status") or "draft",
             payload.get("currency") or settings.get("currency") or "DZD",
             payload.get("notes") or "",
@@ -360,10 +393,18 @@ def update_invoice(conn: sqlite3.Connection, invoice_id: int, payload: dict[str,
     validate_client_exists(conn, int(payload["clientId"]))
     items = validate_items(payload.get("items", []))
     now = utc_now_iso()
+    document_type = (payload.get("documentType") or row["document_type"] if "document_type" in row.keys() else "facture").lower()
+    if document_type not in {"facture", "proforma"}:
+        document_type = "facture"
+    due_date = payload.get("dueDate")
+    if document_type == "proforma":
+        due_date = ""
+    elif due_date is None:
+        due_date = row["due_date"] or ""
     conn.execute(
         """
         UPDATE invoices
-        SET number = ?, client_id = ?, issue_date = ?, due_date = ?, status = ?, currency = ?,
+        SET number = ?, client_id = ?, issue_date = ?, due_date = ?, document_type = ?, include_cachet = ?, status = ?, currency = ?,
             notes = ?, adjustment = ?, discount_amount = ?, tax_rate = ?, updated_at = ?
         WHERE id = ?
         """,
@@ -371,7 +412,9 @@ def update_invoice(conn: sqlite3.Connection, invoice_id: int, payload: dict[str,
             (payload.get("number") or row["number"]).strip(),
             int(payload["clientId"]),
             payload.get("issueDate") or row["issue_date"],
-            payload.get("dueDate") or row["due_date"] or "",
+            due_date,
+            document_type,
+            1 if payload.get("includeCachet") else 0,
             payload.get("status") or row["status"],
             payload.get("currency") or row["currency"],
             payload.get("notes") or "",
@@ -394,11 +437,20 @@ def delete_invoice(conn: sqlite3.Connection, invoice_id: int) -> None:
     conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
 
 
+def build_cachet_flowable(settings: dict[str, Any]) -> Any | None:
+    if not settings.get("cachetImage"):
+        return None
+    image_bytes = decode_logo_image(settings["cachetImage"])
+    if not image_bytes:
+        return None
+    return Image(io.BytesIO(image_bytes), width=38 * mm, height=38 * mm, kind="proportional")
+
+
 def build_logo_flowable(settings: dict[str, Any], logo_text_style: ParagraphStyle) -> Any:
     if settings.get("logoMode") == "image" and settings.get("logoImage"):
         image_bytes = decode_logo_image(settings["logoImage"])
         if image_bytes:
-            return Image(io.BytesIO(image_bytes), width=48 * mm, height=24 * mm, kind="proportional")
+            return Image(io.BytesIO(image_bytes), width=56 * mm, height=30 * mm, kind="proportional")
     return Paragraph(settings.get("logoText") or settings.get("companyName") or "", logo_text_style)
 
 
@@ -416,6 +468,16 @@ def seller_metadata_lines(settings: dict[str, Any], labels: dict[str, str]) -> l
     if settings.get("rip"):
         lines.append(f"{labels['rip']} {settings['rip']}")
     return [line for line in lines if line]
+
+
+def proforma_client_paragraphs(client: dict[str, Any], labels: dict[str, str], value_style: ParagraphStyle) -> list[Any]:
+    lines: list[Any] = [
+        Paragraph(f"<b>{labels['client']}</b>", value_style),
+        Paragraph(client.get("company") or "", value_style),
+    ]
+    if client.get("nif"):
+        lines.append(Paragraph(f"{labels['nif']} {client['nif']}", value_style))
+    return lines
 
 
 def decode_logo_image(logo_image: str) -> bytes | None:
@@ -461,16 +523,17 @@ def build_pdf(invoice: dict[str, Any], settings: dict[str, Any]) -> bytes:
         "LogoText",
         parent=styles["Heading2"],
         fontName="Helvetica-Bold",
-        fontSize=22,
-        leading=26,
+        fontSize=26,
+        leading=30,
         textColor=colors.HexColor("#0F172A"),
         spaceBefore=4,
     )
 
-    labels = invoice_labels(settings)
+    labels = document_labels(invoice, settings)
     story: list[Any] = []
     issue_date = format_display_date(invoice["issueDate"])
     due_date = format_display_date(invoice["dueDate"])
+    proforma = is_proforma(invoice)
     header_left = Table(
         [[build_logo_flowable(settings, logo_text_style)]],
         colWidths=[88 * mm],
@@ -489,8 +552,11 @@ def build_pdf(invoice: dict[str, Any], settings: dict[str, Any]) -> bytes:
     meta_rows = [
         [Paragraph(labels["invoiceNumber"], meta_label_style), Paragraph(str(invoice["number"]), meta_style)],
         [Paragraph(labels["issueDate"], meta_label_style), Paragraph(issue_date, meta_compact_style)],
-        [Paragraph(labels["dueDate"], meta_label_style), Paragraph(due_date, meta_compact_style)],
     ]
+    if not proforma:
+        meta_rows.append(
+            [Paragraph(labels["dueDate"], meta_label_style), Paragraph(due_date, meta_compact_style)]
+        )
     header_right = Table(meta_rows, colWidths=[35 * mm, 30 * mm])
     header_right.setStyle(
         TableStyle(
@@ -528,14 +594,20 @@ def build_pdf(invoice: dict[str, Any], settings: dict[str, Any]) -> bytes:
     ship_lines = [Paragraph(f"<b>{labels['seller']}</b>", value_style)] + [
         Paragraph(line, value_style) for line in seller_metadata_lines(settings, labels)
     ]
-    bill_lines = [
-        Paragraph(f"<b>{labels['billTo']}</b>", value_style),
-        Paragraph(f"{format_client_code(client)} - {client.get('company', '')}", value_style),
-        Paragraph(client.get("contact") or "", value_style),
-        Paragraph(client.get("address") or "", value_style),
-        Paragraph(client.get("email") or "", value_style),
-    ]
-    address_table = Table([[ship_lines, bill_lines]], colWidths=[85 * mm, 85 * mm])
+    if proforma:
+        client_lines = proforma_client_paragraphs(client, labels, value_style)
+        address_table = Table([[ship_lines, client_lines]], colWidths=[85 * mm, 85 * mm])
+    else:
+        bill_lines = [
+            Paragraph(f"<b>{labels['billTo']}</b>", value_style),
+            Paragraph(f"{format_client_code(client)} - {client.get('company', '')}", value_style),
+            Paragraph(client.get("contact") or "", value_style),
+            Paragraph(client.get("address") or "", value_style),
+            Paragraph(client.get("email") or "", value_style),
+        ]
+        if client.get("nif"):
+            bill_lines.append(Paragraph(f"{labels['nif']} {client['nif']}", value_style))
+        address_table = Table([[ship_lines, bill_lines]], colWidths=[85 * mm, 85 * mm])
     address_table.setStyle(
         TableStyle(
             [
@@ -628,7 +700,26 @@ def build_pdf(invoice: dict[str, Any], settings: dict[str, Any]) -> bytes:
         )
     )
 
-    footer_table = Table([[notes_block, totals_table]], colWidths=[95 * mm, 75 * mm])
+    include_cachet = bool(invoice.get("includeCachet")) and settings.get("cachetImage")
+    cachet_flowable = build_cachet_flowable(settings) if include_cachet else None
+    if cachet_flowable:
+        footer_right = Table([[totals_table], [cachet_flowable]], colWidths=[70 * mm])
+        footer_right.setStyle(
+            TableStyle(
+                [
+                    ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 1), (-1, 1), 22),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+    else:
+        footer_right = totals_table
+
+    footer_table = Table([[notes_block, footer_right]], colWidths=[95 * mm, 75 * mm])
     footer_table.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("ALIGN", (1, 0), (1, 0), "RIGHT")]))
     story.append(footer_table)
 
@@ -647,7 +738,8 @@ def build_excel(invoice: dict[str, Any], settings: dict[str, Any]) -> bytes:
     currency = invoice.get("currency") or settings.get("currency") or "DZD"
     client = invoice.get("client") or {}
     totals = invoice.get("totals") or {}
-    labels = invoice_labels(settings)
+    labels = document_labels(invoice, settings)
+    proforma = is_proforma(invoice)
 
     issue_date = format_display_date(invoice["issueDate"])
     due_date = format_display_date(invoice["dueDate"])
@@ -658,18 +750,31 @@ def build_excel(invoice: dict[str, Any], settings: dict[str, Any]) -> bytes:
     sheet["D1"].font = Font(size=11, bold=True)
     sheet["D1"].alignment = Alignment(horizontal="right")
     sheet.merge_cells("D1:E1")
-    sheet["D2"] = f"{labels['issueDate']} {issue_date}  |  {labels['dueDate']} {due_date}"
+    date_line = f"{labels['issueDate']} {issue_date}"
+    if not proforma:
+        date_line += f"  |  {labels['dueDate']} {due_date}"
+    sheet["D2"] = date_line
     sheet["D2"].font = Font(size=10)
     sheet["D2"].alignment = Alignment(horizontal="right")
     sheet.merge_cells("D2:E2")
 
     sheet.append([])
 
-    sheet.append([labels["seller"], "", "", labels["billTo"]])
-    sheet.append([settings.get("companyName", ""), "", "", f"{format_client_code(client)} - {client.get('company', '')}"])
-    sheet.append([settings.get("address", ""), "", "", client.get("address", "")])
-    sheet.append([settings.get("email", ""), "", "", client.get("email", "")])
-    sheet.append([settings.get("phone", ""), "", "", client.get("phone", "")])
+    if proforma:
+        sheet.append([labels["seller"], "", "", labels["client"]])
+        sheet.append([settings.get("companyName", ""), "", "", client.get("company", "")])
+        client_nif = f"{labels['nif']} {client['nif']}" if client.get("nif") else ""
+        sheet.append([settings.get("address", ""), "", "", client_nif])
+        sheet.append([settings.get("email", ""), "", "", ""])
+        sheet.append([settings.get("phone", ""), "", "", ""])
+    else:
+        sheet.append([labels["seller"], "", "", labels["billTo"]])
+        sheet.append([settings.get("companyName", ""), "", "", f"{format_client_code(client)} - {client.get('company', '')}"])
+        sheet.append([settings.get("address", ""), "", "", client.get("address", "")])
+        sheet.append([settings.get("email", ""), "", "", client.get("email", "")])
+        sheet.append([settings.get("phone", ""), "", "", client.get("phone", "")])
+        if client.get("nif"):
+            sheet.append(["", "", "", f"{labels['nif']} {client['nif']}"])
     if settings.get("nif"):
         sheet.append([f"{labels['nif']} {settings.get('nif', '')}", "", "", ""])
     if settings.get("registrationNumber"):
@@ -716,6 +821,15 @@ def build_excel(invoice: dict[str, Any], settings: dict[str, Any]) -> bytes:
     sheet.column_dimensions["C"].width = 16
     sheet.column_dimensions["D"].width = 14
     sheet.column_dimensions["E"].width = 14
+
+    if invoice.get("includeCachet") and settings.get("cachetImage"):
+        cachet_bytes = decode_logo_image(settings["cachetImage"])
+        if cachet_bytes:
+            xl_img = XLImage(io.BytesIO(cachet_bytes))
+            xl_img.width = 112
+            xl_img.height = 112
+            cachet_row = totals_start_row + 9
+            sheet.add_image(xl_img, f"D{cachet_row}")
 
     output = io.BytesIO()
     workbook.save(output)

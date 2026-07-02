@@ -264,7 +264,8 @@ def init_db() -> None:
                 contact TEXT NOT NULL,
                 phone TEXT DEFAULT '',
                 email TEXT DEFAULT '',
-                address TEXT DEFAULT ''
+                address TEXT DEFAULT '',
+                nif TEXT DEFAULT ''
             );
             CREATE TABLE IF NOT EXISTS contracts (
                 id INTEGER PRIMARY KEY,
@@ -301,6 +302,8 @@ def init_db() -> None:
                 client_id INTEGER NOT NULL,
                 issue_date TEXT NOT NULL,
                 due_date TEXT DEFAULT '',
+                document_type TEXT DEFAULT 'facture',
+                include_cachet INTEGER DEFAULT 0,
                 status TEXT DEFAULT 'draft',
                 currency TEXT DEFAULT 'DZD',
                 notes TEXT DEFAULT '',
@@ -344,9 +347,17 @@ def init_db() -> None:
         if "type" not in intervention_columns:
             conn.execute("ALTER TABLE interventions ADD COLUMN type TEXT")
 
+        client_columns = {row[1] for row in conn.execute("PRAGMA table_info(clients)")}
+        if "nif" not in client_columns:
+            conn.execute("ALTER TABLE clients ADD COLUMN nif TEXT DEFAULT ''")
+
         invoice_columns = {row[1] for row in conn.execute("PRAGMA table_info(invoices)")}
         if "discount_amount" not in invoice_columns:
             conn.execute("ALTER TABLE invoices ADD COLUMN discount_amount REAL DEFAULT 0")
+        if "document_type" not in invoice_columns:
+            conn.execute("ALTER TABLE invoices ADD COLUMN document_type TEXT DEFAULT 'facture'")
+        if "include_cachet" not in invoice_columns:
+            conn.execute("ALTER TABLE invoices ADD COLUMN include_cachet INTEGER DEFAULT 0")
 
 
 def read_state() -> dict[str, Any]:
@@ -361,7 +372,7 @@ def replace_state(conn: sqlite3.Connection, state: dict[str, Any]) -> None:
 
     for client in state.get("clients", []):
         conn.execute(
-            "INSERT INTO clients (id, company, contact, phone, email, address) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO clients (id, company, contact, phone, email, address, nif) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 client["id"],
                 client.get("company", ""),
@@ -369,6 +380,7 @@ def replace_state(conn: sqlite3.Connection, state: dict[str, Any]) -> None:
                 client.get("phone", ""),
                 client.get("email", ""),
                 client.get("address", ""),
+                client.get("nif", ""),
             ),
         )
 
@@ -443,6 +455,8 @@ class InvoiceItemPayload(BaseModel):
 class InvoicePayload(BaseModel):
     number: str | None = None
     clientId: int
+    documentType: str = "facture"
+    includeCachet: bool = False
     issueDate: str | None = None
     dueDate: str | None = None
     status: str = "draft"
@@ -466,6 +480,7 @@ class InvoiceSettingsPayload(BaseModel):
     logoMode: str = "text"
     logoText: str = ""
     logoImage: str = ""
+    cachetImage: str = ""
     invoiceLanguage: str = "fr"
     defaultTaxRate: float = 20
     currency: str = "DZD"
