@@ -67,6 +67,9 @@
                         <li v-if="features.invoices" :class="{ active: currentPage === 'invoices' }" @click="navigate('invoices')">
                             <a href="#"><i class="fas fa-file-invoice"></i> <span>Factures</span></a>
                         </li>
+                        <li v-if="features.stock" :class="{ active: currentPage === 'stock' }" @click="navigate('stock')">
+                            <a href="#"><i class="fas fa-boxes"></i> <span>Stock</span></a>
+                        </li>
                         <li :class="{ active: currentPage === 'parametres' }" @click="navigate('parametres')">
                             <a href="#"><i class="fas fa-cog"></i> <span>Paramètres</span></a>
                         </li>
@@ -200,6 +203,9 @@
                                     </button>
                                     <button v-if="features.invoices" class="action-item" @click="openInvoiceModal()">
                                         <i class="fas fa-file-invoice-dollar"></i> Créer une Facture
+                                    </button>
+                                    <button v-if="features.stock" class="action-item" @click="navigate('stock'); openStockProductModal()">
+                                        <i class="fas fa-box-open"></i> Ajouter un Produit
                                     </button>
                                 </div>
                             </div>
@@ -419,9 +425,7 @@
                                 </button>
                             </div>
                         </div>
-
-                </div>
-                </section>
+                    </section>
 
                     <!-- Factures -->
                     <section v-if="features.invoices" class="page" :class="{ active: currentPage === 'invoices' }">
@@ -490,6 +494,196 @@
                                         </tr>
                                     </tbody>
                                 </table>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Stock -->
+                    <section v-if="features.stock" class="page" :class="{ active: currentPage === 'stock' }">
+                        <div class="stock-kpi-grid">
+                            <div class="card stock-kpi-card">
+                                <div class="stock-kpi-icon blue"><i class="fas fa-boxes"></i></div>
+                                <div class="stock-kpi-content">
+                                    <p>Articles</p>
+                                    <h2>{{ stockSummary.totalProducts }}</h2>
+                                </div>
+                            </div>
+                            <div class="card stock-kpi-card" :class="{ 'stock-kpi-card-alert': stockSummary.lowStockCount > 0 }">
+                                <div class="stock-kpi-icon orange"><i class="fas fa-triangle-exclamation"></i></div>
+                                <div class="stock-kpi-content">
+                                    <p>Stock bas</p>
+                                    <h2 :class="{ 'stock-kpi-alert': stockSummary.lowStockCount > 0 }">{{ stockSummary.lowStockCount }}</h2>
+                                </div>
+                            </div>
+                            <div class="card stock-kpi-card">
+                                <div class="stock-kpi-icon green"><i class="fas fa-coins"></i></div>
+                                <div class="stock-kpi-content">
+                                    <p>Valeur du stock</p>
+                                    <h2>{{ formatStockMoney(stockSummary.totalStockValue) }}</h2>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card stock-main-card">
+                            <div class="stock-tabs">
+                                <button type="button" class="stock-tab" :class="{ active: stockTab === 'products' }"
+                                    @click="stockTab = 'products'">
+                                    <i class="fas fa-box"></i> Produits
+                                </button>
+                                <button type="button" class="stock-tab" :class="{ active: stockTab === 'movements' }"
+                                    @click="stockTab = 'movements'">
+                                    <i class="fas fa-right-left"></i> Mouvements
+                                </button>
+                            </div>
+
+                            <div v-if="stockTab === 'products'" class="stock-tab-panel">
+                                <div class="table-controls">
+                                    <div class="search-bar stock-search-row">
+                                        <input type="text" v-model="stockSearch"
+                                            placeholder="Rechercher par nom ou référence...">
+                                        <label class="checkbox-chip stock-filter-chip">
+                                            <input type="checkbox" v-model="stockLowStockOnly">
+                                            Stock bas uniquement
+                                        </label>
+                                    </div>
+                                    <button class="primary-btn" @click="openStockProductModal()">
+                                        <i class="fas fa-plus"></i> Nouveau produit
+                                    </button>
+                                </div>
+                                <p class="stock-table-hint">
+                                    <i class="fas fa-mouse"></i> Double-cliquez sur un produit pour voir son historique
+                                </p>
+                                <div class="table-responsive">
+                                    <table class="stock-products-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Photo</th>
+                                                <th>Produit</th>
+                                                <th>Référence</th>
+                                                <th>Qté</th>
+                                                <th>Prix achat</th>
+                                                <th>Prix vente</th>
+                                                <th>Valeur</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr v-for="product in filteredStockProducts" :key="product.id"
+                                                class="stock-product-row"
+                                                :class="{ 'stock-row-low': product.isLowStock }"
+                                                @dblclick="openStockProductDetail(product)">
+                                                <td>
+                                                    <div class="stock-thumb">
+                                                        <img v-if="product.picture" :src="product.picture" :alt="product.name">
+                                                        <i v-else class="fas fa-box"></i>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <strong>{{ product.name }}</strong>
+                                                    <span v-if="product.isLowStock" class="stock-low-tag">Stock bas</span>
+                                                </td>
+                                                <td><span class="stock-ref">{{ product.reference || '—' }}</span></td>
+                                                <td>
+                                                    <span class="badge stock-qty-badge" :class="product.isLowStock ? 'badge-danger' : 'badge-active'">
+                                                        {{ product.quantity }}
+                                                    </span>
+                                                </td>
+                                                <td>{{ formatStockMoney(product.buyPrice) }}</td>
+                                                <td>{{ formatStockMoney(product.salePrice) }}</td>
+                                                <td class="stock-value-cell">{{ formatStockMoney(product.stockValue) }}</td>
+                                                <td @click.stop>
+                                                    <div class="inline-actions">
+                                                        <button class="icon-btn" title="Historique"
+                                                            @click="openStockProductDetail(product)">
+                                                            <i class="far fa-clock"></i>
+                                                        </button>
+                                                        <button class="icon-btn" title="Mouvement"
+                                                            @click="openStockMovementModal(product)">
+                                                            <i class="fas fa-right-left"></i>
+                                                        </button>
+                                                        <button class="icon-btn" title="Modifier"
+                                                            @click="startEditStockProduct(product)">
+                                                            <i class="far fa-edit"></i>
+                                                        </button>
+                                                        <button class="icon-btn" title="Supprimer" style="color:var(--danger)"
+                                                            @click="deleteStockProduct(product.id)">
+                                                            <i class="far fa-trash-alt"></i>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <tr v-if="filteredStockProducts.length === 0">
+                                                <td colspan="8" class="stock-empty-cell">
+                                                    Aucun produit trouvé.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <div v-else class="stock-tab-panel">
+                                <div class="table-controls stock-movement-controls">
+                                    <div class="stock-movement-filters">
+                                        <select v-model="stockMovementFilterType">
+                                            <option value="">Tous les types</option>
+                                            <option value="in">Entrée</option>
+                                            <option value="out">Sortie</option>
+                                            <option value="adjustment">Ajustement</option>
+                                        </select>
+                                        <select v-model="stockMovementFilterProductId">
+                                            <option value="">Tous les produits</option>
+                                            <option v-for="product in stockProducts" :key="product.id" :value="product.id">
+                                                {{ product.name }}
+                                            </option>
+                                        </select>
+                                        <input type="date" v-model="stockMovementFilterDateFrom" title="Date début">
+                                        <input type="date" v-model="stockMovementFilterDateTo" title="Date fin">
+                                        <button type="button" class="secondary-btn" @click="applyStockMovementFilters()">
+                                            <i class="fas fa-filter"></i> Filtrer
+                                        </button>
+                                        <button v-if="stockMovementFilterType || stockMovementFilterProductId || stockMovementFilterDateFrom || stockMovementFilterDateTo"
+                                            type="button" class="text-btn"
+                                            @click="stockMovementFilterType = ''; stockMovementFilterProductId = ''; stockMovementFilterDateFrom = ''; stockMovementFilterDateTo = ''; applyStockMovementFilters()">
+                                            Réinitialiser
+                                        </button>
+                                    </div>
+                                    <button class="primary-btn" @click="openStockMovementModal()">
+                                        <i class="fas fa-plus"></i> Nouveau mouvement
+                                    </button>
+                                </div>
+                                <div class="table-responsive">
+                                    <table>
+                                        <thead>
+                                            <tr>
+                                                <th>Date</th>
+                                                <th>Produit</th>
+                                                <th>Type</th>
+                                                <th>Qté</th>
+                                                <th>Prix unitaire</th>
+                                                <th>Motif</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr v-for="movement in filteredStockMovements" :key="movement.id">
+                                                <td>{{ formatStockDate(movement.movementDate) }}</td>
+                                                <td>{{ movement.productName }}</td>
+                                                <td>
+                                                    <span class="badge stock-movement-badge"
+                                                        :class="stockMovementTypeClass(movement.type)">
+                                                        {{ stockMovementTypeLabel(movement.type) }}
+                                                    </span>
+                                                </td>
+                                                <td>{{ movement.quantity }}</td>
+                                                <td>{{ formatStockMoney(movement.unitPrice) }}</td>
+                                                <td>{{ movement.reason || '—' }}</td>
+                                            </tr>
+                                            <tr v-if="filteredStockMovements.length === 0">
+                                                <td colspan="6" class="stock-empty-cell">
+                                                    Aucun mouvement trouvé.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         </div>
                     </section>
@@ -666,13 +860,13 @@
     </main>
 
     <!-- ===== MODALS ===== -->
-    <div class="modal-overlay" :style="{ display: activeModal ? 'flex' : 'none' }" @click.self="closeModal()">
+    <div class="modal-overlay" :style="{ display: activeModal ? 'flex' : 'none' }" @click.self="requestCloseModal()">
 
         <!-- Modal Client -->
         <div class="modal" v-show="activeModal === 'clientModal'">
             <div class="modal-header">
                 <h3>{{ editingClientId ? 'Modifier le Client' : 'Ajouter un Client' }}</h3>
-                <button class="close-modal" @click="closeModal()">&times;</button>
+                <button class="close-modal" @click="requestCloseModal()">&times;</button>
             </div>
             <form class="modal-body" @submit.prevent="submitClient()">
                 <div class="form-group">
@@ -702,7 +896,7 @@
                     <input type="text" v-model="clientForm.nif" placeholder="Numéro d'identification fiscale (optionnel)">
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="secondary-btn" @click="closeModal()">Annuler</button>
+                    <button type="button" class="secondary-btn" @click="requestCloseModal()">Annuler</button>
                     <button type="submit" class="primary-btn">{{ editingClientId ? 'Mettre à jour' :
                         'Enregistrer' }}</button>
                 </div>
@@ -713,7 +907,7 @@
         <div class="modal modal-wide" v-show="activeModal === 'contractModal'">
             <div class="modal-header">
                 <h3>{{ editingContractId ? 'Modifier le Contrat' : 'Créer un Contrat' }}</h3>
-                <button class="close-modal" @click="closeModal()">&times;</button>
+                <button class="close-modal" @click="requestCloseModal()">&times;</button>
             </div>
             <form class="modal-body contract-form-body" @submit.prevent="submitContract()">
                 <div class="form-group">
@@ -774,7 +968,7 @@
                         placeholder="Précisions sur le contrat..."></textarea>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="secondary-btn" @click="closeModal()">Annuler</button>
+                    <button type="button" class="secondary-btn" @click="requestCloseModal()">Annuler</button>
                     <button type="submit" class="primary-btn">{{ editingContractId ? 'Mettre à jour' :
                         'Enregistrer' }}</button>
                 </div>
@@ -858,7 +1052,7 @@
         <div class="modal" v-show="activeModal === 'interventionModal'">
             <div class="modal-header">
                 <h3>{{ editingInterventionId ? 'Modifier l\'Intervention' : 'Planifier une Intervention' }}</h3>
-                <button class="close-modal" @click="closeModal()">&times;</button>
+                <button class="close-modal" @click="requestCloseModal()">&times;</button>
             </div>
             <form class="modal-body" @submit.prevent="submitIntervention()">
                 <div class="form-group">
@@ -918,7 +1112,7 @@
                         placeholder="Description ou remarques..."></textarea>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="secondary-btn" @click="closeModal()">Annuler</button>
+                    <button type="button" class="secondary-btn" @click="requestCloseModal()">Annuler</button>
                     <button type="submit" class="primary-btn">{{ editingInterventionId ? 'Mettre à jour' :
                         'Planifier' }}</button>
                 </div>
@@ -929,7 +1123,7 @@
         <div class="modal modal-wide" v-show="activeModal === 'invoiceModal'">
             <div class="modal-header">
                 <h3>{{ editingInvoiceId ? 'Modifier le document' : 'Nouveau document' }}</h3>
-                <button class="close-modal" @click="closeModal()">&times;</button>
+                <button class="close-modal" @click="requestCloseModal()">&times;</button>
             </div>
             <form class="modal-body invoice-form-body" @submit.prevent="submitInvoice()">
                 <div class="form-row">
@@ -1072,10 +1266,211 @@
                 </div>
 
                 <div class="modal-footer">
-                    <button type="button" class="secondary-btn" @click="closeModal()">Annuler</button>
+                    <button type="button" class="secondary-btn" @click="requestCloseModal()">Annuler</button>
                     <button type="submit" class="primary-btn">{{ editingInvoiceId ? 'Mettre à jour' : 'Créer' }}</button>
                 </div>
             </form>
+        </div>
+
+        <!-- Modal Produit Stock -->
+        <div class="modal" v-show="activeModal === 'stockProductModal'">
+            <div class="modal-header">
+                <h3>{{ editingStockProductId ? 'Modifier le produit' : 'Nouveau produit' }}</h3>
+                <button class="close-modal" @click="requestCloseModal()">&times;</button>
+            </div>
+            <form class="modal-body" @submit.prevent="submitStockProduct()">
+                <div class="form-group">
+                    <label>Nom</label>
+                    <input type="text" v-model="stockProductForm.name" required placeholder="Ex. Raccord cuivre 15 mm">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Référence</label>
+                        <input type="text" v-model="stockProductForm.reference" placeholder="SKU / référence fournisseur">
+                    </div>
+                    <div class="form-group" v-if="!editingStockProductId">
+                        <label>Quantité initiale</label>
+                        <input type="number" min="0" step="0.01" v-model.number="stockProductForm.initialQuantity">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Prix d'achat</label>
+                        <input type="number" min="0" step="0.01" v-model.number="stockProductForm.buyPrice">
+                    </div>
+                    <div class="form-group">
+                        <label>Prix de vente</label>
+                        <input type="number" min="0" step="0.01" v-model.number="stockProductForm.salePrice">
+                    </div>
+                    <div class="form-group">
+                        <label>Seuil stock bas</label>
+                        <input type="number" min="0" step="0.01" v-model.number="stockProductForm.lowStockThreshold">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Photo (optionnelle)</label>
+                    <input type="file" accept="image/*" @change="onStockProductPictureChange($event)">
+                    <div v-if="stockProductForm.picture" class="stock-picture-preview">
+                        <img :src="stockProductForm.picture" alt="Aperçu produit">
+                        <button type="button" class="secondary-btn" @click="removeStockProductPicture()">Supprimer</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <textarea rows="2" v-model="stockProductForm.notes" placeholder="Remarques..."></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="secondary-btn" @click="requestCloseModal()">Annuler</button>
+                    <button type="submit" class="primary-btn">{{ editingStockProductId ? 'Mettre à jour' : 'Créer' }}</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Modal Mouvement Stock -->
+        <div class="modal" v-show="activeModal === 'stockMovementModal'">
+            <div class="modal-header">
+                <h3>Nouveau mouvement</h3>
+                <button class="close-modal" @click="requestCloseModal()">&times;</button>
+            </div>
+            <form class="modal-body" @submit.prevent="submitStockMovement()">
+                <div class="form-group">
+                    <label>Produit</label>
+                    <select v-model="stockMovementForm.productId" required>
+                        <option value="" disabled>Sélectionner un produit</option>
+                        <option v-for="product in stockProducts" :key="product.id" :value="product.id">
+                            {{ product.name }} ({{ product.quantity }})
+                        </option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Type</label>
+                        <select v-model="stockMovementForm.type">
+                            <option value="in">Entrée</option>
+                            <option value="out">Sortie</option>
+                            <option value="adjustment">Ajustement</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Date</label>
+                        <input type="date" v-model="stockMovementForm.movementDate" required>
+                    </div>
+                </div>
+                <div class="form-row" v-if="stockMovementForm.type !== 'adjustment'">
+                    <div class="form-group">
+                        <label>Quantité</label>
+                        <input type="number" min="0.01" step="0.01" v-model.number="stockMovementForm.quantity" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Prix unitaire</label>
+                        <input type="number" min="0" step="0.01" v-model.number="stockMovementForm.unitPrice">
+                    </div>
+                </div>
+                <div class="form-group" v-else>
+                    <label>Nouvelle quantité</label>
+                    <input type="number" min="0" step="0.01" v-model.number="stockMovementForm.newQuantity" required>
+                    <p v-if="selectedStockMovementProduct" class="field-hint">
+                        Stock actuel : {{ selectedStockMovementProduct.quantity }}
+                    </p>
+                </div>
+                <div class="form-group">
+                    <label>Motif</label>
+                    <textarea rows="2" v-model="stockMovementForm.reason"
+                        placeholder="Ex. Achat quincaillerie, intervention client..."></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="secondary-btn" @click="requestCloseModal()">Annuler</button>
+                    <button type="submit" class="primary-btn">Enregistrer</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Modal Détail Produit Stock -->
+        <div class="modal modal-wide stock-detail-modal" v-if="activeModal === 'stockProductDetailModal' && stockProductDetail">
+            <div class="modal-header">
+                <div>
+                    <h3>{{ stockProductDetail.name }}</h3>
+                    <p v-if="stockProductDetail.reference" class="modal-subtitle">Réf. {{ stockProductDetail.reference }}</p>
+                </div>
+                <button class="close-modal" @click="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body stock-detail-body">
+                <div class="stock-detail-summary">
+                    <div class="stock-detail-photo">
+                        <img v-if="stockProductDetail.picture" :src="stockProductDetail.picture" :alt="stockProductDetail.name">
+                        <i v-else class="fas fa-box"></i>
+                    </div>
+                    <div class="stock-detail-stats">
+                        <div class="stock-detail-stat">
+                            <span>Quantité</span>
+                            <strong :class="{ 'stock-kpi-alert': stockProductDetail.isLowStock }">
+                                {{ stockProductDetail.quantity }}
+                            </strong>
+                        </div>
+                        <div class="stock-detail-stat">
+                            <span>Prix achat</span>
+                            <strong>{{ formatStockMoney(stockProductDetail.buyPrice) }}</strong>
+                        </div>
+                        <div class="stock-detail-stat">
+                            <span>Prix vente</span>
+                            <strong>{{ formatStockMoney(stockProductDetail.salePrice) }}</strong>
+                        </div>
+                        <div class="stock-detail-stat">
+                            <span>Valeur stock</span>
+                            <strong>{{ formatStockMoney(stockProductDetail.stockValue) }}</strong>
+                        </div>
+                    </div>
+                </div>
+                <p v-if="stockProductDetail.notes" class="stock-detail-notes">{{ stockProductDetail.notes }}</p>
+
+                <div class="stock-detail-movements">
+                    <div class="card-header">
+                        <h4><i class="fas fa-clock-rotate-left"></i> Historique des mouvements</h4>
+                    </div>
+                    <div v-if="stockProductDetailLoading" class="stock-detail-loading">
+                        <i class="fas fa-spinner fa-spin"></i> Chargement...
+                    </div>
+                    <div v-else class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Type</th>
+                                    <th>Qté</th>
+                                    <th>Prix unitaire</th>
+                                    <th>Motif</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="movement in stockProductDetailMovements" :key="movement.id">
+                                    <td>{{ formatStockDate(movement.movementDate) }}</td>
+                                    <td>
+                                        <span class="badge stock-movement-badge"
+                                            :class="stockMovementTypeClass(movement.type)">
+                                            {{ stockMovementTypeLabel(movement.type) }}
+                                        </span>
+                                    </td>
+                                    <td>{{ movement.quantity }}</td>
+                                    <td>{{ formatStockMoney(movement.unitPrice) }}</td>
+                                    <td>{{ movement.reason || '—' }}</td>
+                                </tr>
+                                <tr v-if="!stockProductDetailMovements.length">
+                                    <td colspan="5" class="stock-empty-cell">Aucun mouvement pour ce produit.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="secondary-btn" @click="openStockMovementFromDetail()">
+                    <i class="fas fa-right-left"></i> Nouveau mouvement
+                </button>
+                <button type="button" class="secondary-btn" @click="editStockProductFromDetail()">
+                    <i class="far fa-edit"></i> Modifier
+                </button>
+                <button type="button" class="primary-btn" @click="closeModal()">Fermer</button>
+            </div>
         </div>
 
         <!-- Modal Aperçu Facture -->
@@ -1188,6 +1583,20 @@
         </div>
 
     </div><!-- /modal-overlay -->
+
+    <!-- Confirmation fermeture formulaire -->
+    <div class="confirm-overlay" v-if="showCloseConfirm" @click.self="cancelDiscardChanges()">
+        <div class="modal confirm-modal" @click.stop>
+            <div class="modal-header">
+                <h3>Fermer sans enregistrer ?</h3>
+            </div>
+            <p class="confirm-message">Vous avez des modifications non enregistrées. Voulez-vous vraiment fermer ce formulaire ?</p>
+            <div class="modal-footer">
+                <button type="button" class="secondary-btn" @click="cancelDiscardChanges()">Continuer l'édition</button>
+                <button type="button" class="primary-btn danger-btn" @click="confirmDiscardChanges()">Fermer sans enregistrer</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Toast -->
     <div class="toast" :class="{ show: toastVisible }">{{ toastMessage }}</div>

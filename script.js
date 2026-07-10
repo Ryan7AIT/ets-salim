@@ -8,6 +8,7 @@ const AUTH_KEY = 'plombtrack-auth-v1';
 const API_BASE = window.location.protocol === 'file:' ? 'http://127.0.0.1:8000/api' : '/api';
 const INTERVENTION_STATUSES = ['Planifié', 'En cours', 'Terminé', 'Annulé'];
 const INTERVENTION_TYPES = { CHAUDIERE: 'chaudiere', BRULEUR: 'bruleur', CHAUDIERE_BRULEUR: 'chaudiere_bruleur' };
+const FORM_MODALS = ['clientModal', 'contractModal', 'interventionModal', 'invoiceModal', 'stockProductModal', 'stockMovementModal'];
 const CURRENT_DATA_YEAR = 2026;
 
 function parseInterventionSequence(id) {
@@ -283,6 +284,51 @@ function createDefaultInvoiceForm(settings = {}) {
     };
 }
 
+function createDefaultStockProductForm() {
+    return {
+        name: '',
+        reference: '',
+        picture: '',
+        buyPrice: 0,
+        salePrice: 0,
+        lowStockThreshold: 0,
+        notes: '',
+        initialQuantity: 0,
+    };
+}
+
+function createDefaultStockMovementForm(product = null) {
+    const today = new Date().toISOString().slice(0, 10);
+    return {
+        productId: product?.id || '',
+        type: 'in',
+        quantity: 1,
+        newQuantity: product ? Number(product.quantity) || 0 : 0,
+        unitPrice: product ? Number(product.buyPrice) || 0 : 0,
+        reason: '',
+        movementDate: today,
+    };
+}
+
+function formatStockMoney(value) {
+    const amount = Number(value) || 0;
+    return `${amount.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} DZD`;
+}
+
+function stockMovementTypeLabel(type) {
+    if (type === 'in') return 'Entrée';
+    if (type === 'out') return 'Sortie';
+    if (type === 'adjustment') return 'Ajustement';
+    return type;
+}
+
+function stockMovementTypeClass(type) {
+    if (type === 'in') return 'stock-movement-in';
+    if (type === 'out') return 'stock-movement-out';
+    if (type === 'adjustment') return 'stock-movement-adjustment';
+    return '';
+}
+
 function computeInvoiceTotals(items, adjustment, taxRate, discountAmount = 0) {
     const subtotal = (items || []).reduce((sum, item) => {
         const qty = Number(item.quantity) || 0;
@@ -406,6 +452,8 @@ createApp({
             currentPage: 'dashboard',
             sidebarOpen: false,
             activeModal: null,
+            showCloseConfirm: false,
+            formSnapshot: null,
             toastMessage: '',
             toastVisible: false,
             notificationsOpen: false,
@@ -462,7 +510,7 @@ createApp({
                 notes: '',
             },
 
-            features: { invoices: false },
+            features: { invoices: false, stock: false },
             invoices: [],
             invoiceSearch: '',
             invoiceSettings: createDefaultInvoiceSettings(),
@@ -470,6 +518,24 @@ createApp({
             editingInvoiceId: null,
             previewInvoiceId: null,
             invoiceForm: createDefaultInvoiceForm(),
+
+            stockProducts: [],
+            stockSummary: { totalProducts: 0, lowStockCount: 0, totalStockValue: 0 },
+            stockMovements: [],
+            stockTab: 'products',
+            stockSearch: '',
+            stockLowStockOnly: false,
+            stockMovementFilterType: '',
+            stockMovementFilterProductId: '',
+            stockMovementFilterDateFrom: '',
+            stockMovementFilterDateTo: '',
+            editingStockProductId: null,
+            stockProductForm: createDefaultStockProductForm(),
+            stockMovementForm: createDefaultStockMovementForm(),
+            stockProductDetail: null,
+            stockProductDetailMovements: [],
+            stockProductDetailLoading: false,
+            stockMovementReturnProductId: null,
         };
     },
 
@@ -481,6 +547,7 @@ createApp({
                 contracts: 'Contrats',
                 interventions: 'Interventions',
                 invoices: 'Factures',
+                stock: 'Stock',
                 reports: 'Rapports & KPIs',
                 parametres: 'Paramètres',
             };
@@ -650,6 +717,28 @@ createApp({
         previewDocumentTitle() {
             return invoiceDocumentTypeLabel(this.previewInvoice?.documentType);
         },
+
+        filteredStockProducts() {
+            const q = this.stockSearch.toLowerCase();
+            return this.stockProducts.filter(product => {
+                const matchesSearch = (
+                    (product.name || '').toLowerCase().includes(q)
+                    || (product.reference || '').toLowerCase().includes(q)
+                );
+                if (!matchesSearch) return false;
+                if (this.stockLowStockOnly && !product.isLowStock) return false;
+                return true;
+            });
+        },
+
+        filteredStockMovements() {
+            return this.stockMovements;
+        },
+
+        selectedStockMovementProduct() {
+            if (!this.stockMovementForm.productId) return null;
+            return this.stockProducts.find(product => product.id === Number(this.stockMovementForm.productId)) || null;
+        },
     },
 
     watch: {
@@ -711,6 +800,26 @@ createApp({
             this.invoiceForm.clientNif = client?.nif || '';
         },
 
+        'stockMovementForm.productId'(productId) {
+            const product = this.stockProducts.find(item => item.id === Number(productId));
+            if (!product) return;
+            if (this.stockMovementForm.type === 'adjustment') {
+                this.stockMovementForm.newQuantity = Number(product.quantity) || 0;
+            }
+            if (!this.stockMovementForm.unitPrice) {
+                this.stockMovementForm.unitPrice = this.defaultStockMovementUnitPrice(product, this.stockMovementForm.type);
+            }
+        },
+
+        'stockMovementForm.type'(movementType) {
+            const product = this.selectedStockMovementProduct;
+            if (!product) return;
+            if (movementType === 'adjustment') {
+                this.stockMovementForm.newQuantity = Number(product.quantity) || 0;
+            }
+            this.stockMovementForm.unitPrice = this.defaultStockMovementUnitPrice(product, movementType);
+        },
+
         interventionTotalPages(total) {
             if (this.interventionPage > total) this.interventionPage = total;
         },
@@ -725,9 +834,17 @@ createApp({
             await this.loadInvoices();
             await this.loadInvoiceSettings();
         }
+        if (this.isAuthenticated && this.features.stock) {
+            await this.loadStock();
+        }
+        this._onEscapeKey = (event) => {
+            if (event.key === 'Escape') this.handleEscapeKey();
+        };
+        document.addEventListener('keydown', this._onEscapeKey);
     },
 
     beforeUnmount() {
+        document.removeEventListener('keydown', this._onEscapeKey);
         Object.keys(this.chartInstances).forEach(id => this.destroyChart(id));
     },
 
@@ -749,10 +866,13 @@ createApp({
         async loadConfig() {
             try {
                 const config = await this.apiRequest('/config');
-                this.features = { invoices: Boolean(config?.features?.invoices) };
+                this.features = {
+                    invoices: Boolean(config?.features?.invoices),
+                    stock: Boolean(config?.features?.stock),
+                };
             } catch (error) {
                 console.error('Unable to load API config.', error);
-                this.features = { invoices: false };
+                this.features = { invoices: false, stock: false };
             }
         },
 
@@ -1022,6 +1142,246 @@ createApp({
             return 'badge-pending';
         },
 
+        async loadStock() {
+            if (!this.features.stock) return;
+            try {
+                const [productsResponse, movements] = await Promise.all([
+                    this.apiRequest('/stock/products'),
+                    this.apiRequest(this.buildStockMovementsQuery()),
+                ]);
+                this.stockProducts = productsResponse?.products || [];
+                this.stockSummary = productsResponse?.summary || {
+                    totalProducts: 0,
+                    lowStockCount: 0,
+                    totalStockValue: 0,
+                };
+                this.stockMovements = movements || [];
+            } catch (error) {
+                console.error('Unable to load stock.', error);
+                this.showToast('Impossible de charger le stock.');
+            }
+        },
+
+        buildStockMovementsQuery() {
+            const params = new URLSearchParams();
+            if (this.stockMovementFilterProductId) {
+                params.set('product_id', String(this.stockMovementFilterProductId));
+            }
+            if (this.stockMovementFilterType) {
+                params.set('type', this.stockMovementFilterType);
+            }
+            if (this.stockMovementFilterDateFrom) {
+                params.set('date_from', this.stockMovementFilterDateFrom);
+            }
+            if (this.stockMovementFilterDateTo) {
+                params.set('date_to', this.stockMovementFilterDateTo);
+            }
+            const query = params.toString();
+            return query ? `/stock/movements?${query}` : '/stock/movements';
+        },
+
+        async reloadStockMovements() {
+            if (!this.features.stock) return;
+            try {
+                this.stockMovements = await this.apiRequest(this.buildStockMovementsQuery());
+            } catch (error) {
+                console.error('Unable to load stock movements.', error);
+                this.showToast('Impossible de charger les mouvements.');
+            }
+        },
+
+        openStockProductModal() {
+            this.editingStockProductId = null;
+            this.stockProductForm = createDefaultStockProductForm();
+            this.openModal('stockProductModal');
+        },
+
+        startEditStockProduct(product) {
+            this.editingStockProductId = product.id;
+            this.stockProductForm = {
+                name: product.name,
+                reference: product.reference || '',
+                picture: product.picture || '',
+                buyPrice: product.buyPrice || 0,
+                salePrice: product.salePrice || 0,
+                lowStockThreshold: product.lowStockThreshold || 0,
+                notes: product.notes || '',
+                initialQuantity: 0,
+            };
+            this.openModal('stockProductModal');
+        },
+
+        openStockMovementModal(product = null) {
+            this.stockMovementForm = createDefaultStockMovementForm(product);
+            if (product) {
+                this.stockMovementForm.unitPrice = this.defaultStockMovementUnitPrice(product, this.stockMovementForm.type);
+            }
+            this.openModal('stockMovementModal');
+        },
+
+        async openStockProductDetail(product) {
+            if (!product?.id) return;
+            this.stockProductDetail = product;
+            this.stockProductDetailMovements = [];
+            this.stockProductDetailLoading = true;
+            this.openModal('stockProductDetailModal');
+            try {
+                const [detail, movements] = await Promise.all([
+                    this.apiRequest(`/stock/products/${product.id}`),
+                    this.apiRequest(`/stock/movements?product_id=${product.id}`),
+                ]);
+                this.stockProductDetail = detail;
+                this.stockProductDetailMovements = movements || [];
+            } catch (error) {
+                console.error('Unable to load product detail.', error);
+                this.showToast('Impossible de charger le détail du produit.');
+            } finally {
+                this.stockProductDetailLoading = false;
+            }
+        },
+
+        openStockMovementFromDetail() {
+            const product = this.stockProductDetail;
+            this.stockMovementReturnProductId = product?.id || null;
+            this.closeModal();
+            this.$nextTick(() => {
+                this.openStockMovementModal(product);
+            });
+        },
+
+        editStockProductFromDetail() {
+            const product = this.stockProductDetail;
+            this.closeModal();
+            this.$nextTick(() => {
+                this.startEditStockProduct(product);
+            });
+        },
+
+        defaultStockMovementUnitPrice(product, movementType) {
+            if (movementType === 'out') {
+                return Number(product.salePrice) || Number(product.buyPrice) || 0;
+            }
+            return Number(product.buyPrice) || 0;
+        },
+
+        onStockProductPictureChange(event) {
+            const file = event.target.files?.[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                this.stockProductForm.picture = String(reader.result || '');
+            };
+            reader.readAsDataURL(file);
+        },
+
+        removeStockProductPicture() {
+            this.stockProductForm.picture = '';
+        },
+
+        async submitStockProduct() {
+            const name = (this.stockProductForm.name || '').trim();
+            if (!name) {
+                this.showToast('Le nom du produit est obligatoire.');
+                return;
+            }
+
+            const payload = {
+                name,
+                reference: (this.stockProductForm.reference || '').trim(),
+                picture: this.stockProductForm.picture || '',
+                buyPrice: Number(this.stockProductForm.buyPrice) || 0,
+                salePrice: Number(this.stockProductForm.salePrice) || 0,
+                lowStockThreshold: Number(this.stockProductForm.lowStockThreshold) || 0,
+                notes: (this.stockProductForm.notes || '').trim(),
+            };
+
+            try {
+                if (this.editingStockProductId) {
+                    await this.apiRequest(`/stock/products/${this.editingStockProductId}`, {
+                        method: 'PUT',
+                        body: JSON.stringify(payload),
+                    });
+                    this.showToast('Produit mis à jour.');
+                } else {
+                    await this.apiRequest('/stock/products', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            ...payload,
+                            initialQuantity: Number(this.stockProductForm.initialQuantity) || 0,
+                        }),
+                    });
+                    this.showToast('Produit créé.');
+                }
+                await this.loadStock();
+                this.closeModal();
+            } catch (error) {
+                console.error('Unable to save stock product.', error);
+                this.showToast(error.message || 'Sauvegarde du produit impossible.');
+            }
+        },
+
+        async deleteStockProduct(id) {
+            if (!confirm('Supprimer ce produit ?')) return;
+            try {
+                await this.apiRequest(`/stock/products/${id}`, { method: 'DELETE' });
+                await this.loadStock();
+                this.showToast('Produit supprimé.');
+            } catch (error) {
+                console.error('Unable to delete stock product.', error);
+                this.showToast(error.message || 'Suppression impossible.');
+            }
+        },
+
+        async submitStockMovement() {
+            if (!this.stockMovementForm.productId) {
+                this.showToast('Sélectionnez un produit.');
+                return;
+            }
+
+            const payload = {
+                productId: Number(this.stockMovementForm.productId),
+                type: this.stockMovementForm.type,
+                quantity: Number(this.stockMovementForm.quantity) || 0,
+                unitPrice: Number(this.stockMovementForm.unitPrice) || 0,
+                reason: (this.stockMovementForm.reason || '').trim(),
+                movementDate: this.stockMovementForm.movementDate,
+            };
+
+            if (this.stockMovementForm.type === 'adjustment') {
+                payload.newQuantity = Number(this.stockMovementForm.newQuantity);
+            }
+
+            try {
+                await this.apiRequest('/stock/movements', {
+                    method: 'POST',
+                    body: JSON.stringify(payload),
+                });
+                this.showToast('Mouvement enregistré.');
+                const returnProductId = this.stockMovementReturnProductId;
+                this.stockMovementReturnProductId = null;
+                await this.loadStock();
+                this.closeModal();
+                if (returnProductId) {
+                    const product = this.stockProducts.find(item => item.id === returnProductId);
+                    if (product) await this.openStockProductDetail(product);
+                }
+            } catch (error) {
+                console.error('Unable to save stock movement.', error);
+                this.showToast(error.message || 'Enregistrement du mouvement impossible.');
+            }
+        },
+
+        async applyStockMovementFilters() {
+            await this.reloadStockMovements();
+        },
+
+        formatStockMoney,
+        formatStockDate(value) {
+            return formatInvoiceDate(value);
+        },
+        stockMovementTypeLabel,
+        stockMovementTypeClass,
+
         async loadState() {
             const defaults = createDefaultState();
             let stored = null;
@@ -1233,6 +1593,9 @@ createApp({
                     await this.loadInvoices();
                     await this.loadInvoiceSettings();
                 }
+                if (this.features.stock) {
+                    await this.loadStock();
+                }
                 this.showToast('Connexion réussie.');
                 return;
             } catch (error) {
@@ -1250,13 +1613,14 @@ createApp({
             this.isAuthenticated = false;
             this.sidebarOpen = false;
             this.notificationsOpen = false;
-            this.activeModal = null;
+            this.closeModal();
             this.currentPage = 'dashboard';
             this.loginError = '';
         },
 
         navigate(page) {
             if (page === 'invoices' && !this.features.invoices) return;
+            if (page === 'stock' && !this.features.stock) return;
             this.currentPage = page;
             this.notificationsOpen = false;
             if (window.innerWidth <= 768) this.sidebarOpen = false;
@@ -1271,6 +1635,9 @@ createApp({
             }
             if (page === 'invoices' && this.features.invoices) {
                 this.loadInvoices();
+            }
+            if (page === 'stock' && this.features.stock) {
+                this.loadStock();
             }
         },
 
@@ -1294,14 +1661,89 @@ createApp({
             this.showToast('Paramètres enregistrés.');
         },
 
+        isFormModal(name) {
+            return FORM_MODALS.includes(name);
+        },
+
+        getActiveFormSnapshot() {
+            switch (this.activeModal) {
+                case 'clientModal':
+                    return JSON.stringify(this.clientForm);
+                case 'contractModal':
+                    return JSON.stringify(this.contractForm);
+                case 'interventionModal':
+                    return JSON.stringify(this.interventionForm);
+                case 'invoiceModal':
+                    return JSON.stringify(this.invoiceForm);
+                case 'stockProductModal':
+                    return JSON.stringify(this.stockProductForm);
+                case 'stockMovementModal':
+                    return JSON.stringify(this.stockMovementForm);
+                default:
+                    return null;
+            }
+        },
+
+        captureFormSnapshot() {
+            this.formSnapshot = this.getActiveFormSnapshot();
+        },
+
+        isActiveFormDirty() {
+            if (!this.isFormModal(this.activeModal) || this.formSnapshot === null) return false;
+            return this.getActiveFormSnapshot() !== this.formSnapshot;
+        },
+
         openModal(name) {
             this.activeModal = name;
+            this.showCloseConfirm = false;
+            if (this.isFormModal(name)) {
+                this.captureFormSnapshot();
+            } else {
+                this.formSnapshot = null;
+            }
+        },
+
+        requestCloseModal() {
+            if (this.showCloseConfirm) return;
+            if (this.isActiveFormDirty()) {
+                this.showCloseConfirm = true;
+                return;
+            }
+            this.closeModal();
+        },
+
+        confirmDiscardChanges() {
+            this.showCloseConfirm = false;
+            this.closeModal();
+        },
+
+        cancelDiscardChanges() {
+            this.showCloseConfirm = false;
+        },
+
+        handleEscapeKey() {
+            if (this.showCloseConfirm) {
+                this.cancelDiscardChanges();
+                return;
+            }
+            if (!this.activeModal) return;
+            if (this.isFormModal(this.activeModal)) {
+                this.requestCloseModal();
+            } else {
+                this.closeModal();
+            }
         },
 
         closeModal() {
+            this.showCloseConfirm = false;
+            this.formSnapshot = null;
             this.activeModal = null;
             this.selectedContractId = null;
             this.previewInvoiceId = null;
+            this.stockProductDetailMovements = [];
+            this.stockProductDetailLoading = false;
+            this.stockMovementReturnProductId = null;
+            this.stockProductDetail = null;
         },
 
         toggleNotifications() {

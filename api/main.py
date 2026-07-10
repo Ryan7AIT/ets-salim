@@ -26,6 +26,17 @@ try:
         save_invoice_settings,
         update_invoice,
     )
+    from .stock_service import (
+        create_movement,
+        create_product,
+        delete_product,
+        get_product,
+        list_movements,
+        list_products,
+        require_stock_enabled,
+        stock_enabled,
+        update_product,
+    )
     from .notification_service import (
         configure_sqlite_connection,
         load_notification_state,
@@ -48,6 +59,17 @@ except ImportError:
         require_invoices_enabled,
         save_invoice_settings,
         update_invoice,
+    )
+    from stock_service import (
+        create_movement,
+        create_product,
+        delete_product,
+        get_product,
+        list_movements,
+        list_products,
+        require_stock_enabled,
+        stock_enabled,
+        update_product,
     )
     from notification_service import (
         configure_sqlite_connection,
@@ -324,6 +346,33 @@ def init_db() -> None:
                 sort_order INTEGER DEFAULT 0,
                 FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS stock_products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                reference TEXT DEFAULT '',
+                picture TEXT DEFAULT '',
+                quantity REAL DEFAULT 0,
+                buy_price REAL DEFAULT 0,
+                sale_price REAL DEFAULT 0,
+                low_stock_threshold REAL DEFAULT 0,
+                notes TEXT DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS stock_movements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                quantity REAL NOT NULL,
+                unit_price REAL DEFAULT 0,
+                reason TEXT DEFAULT '',
+                movement_date TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (product_id) REFERENCES stock_products(id) ON DELETE RESTRICT
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_products_reference
+                ON stock_products(reference)
+                WHERE reference != '';
             """
         )
 
@@ -488,8 +537,42 @@ class InvoiceSettingsPayload(BaseModel):
     footerNotes: str = ""
 
 
+class StockProductPayload(BaseModel):
+    name: str
+    reference: str = ""
+    picture: str = ""
+    buyPrice: float = 0
+    salePrice: float = 0
+    lowStockThreshold: float = 0
+    notes: str = ""
+    initialQuantity: float = 0
+
+
+class StockProductUpdatePayload(BaseModel):
+    name: str
+    reference: str = ""
+    picture: str | None = None
+    buyPrice: float | None = None
+    salePrice: float | None = None
+    lowStockThreshold: float | None = None
+    notes: str | None = None
+
+
+class StockMovementPayload(BaseModel):
+    productId: int
+    type: str
+    quantity: float = 0
+    newQuantity: float | None = None
+    unitPrice: float = 0
+    reason: str = ""
+    movementDate: str | None = None
+
+
 def feature_flags() -> dict[str, bool]:
-    return {"invoices": invoices_enabled(read_config_value)}
+    return {
+        "invoices": invoices_enabled(read_config_value),
+        "stock": stock_enabled(read_config_value),
+    }
 
 
 @app.on_event("startup")
@@ -614,6 +697,61 @@ def api_put_invoice_settings(payload: InvoiceSettingsPayload) -> dict[str, Any]:
     require_invoices_enabled(read_config_value)
     with db() as conn:
         return save_invoice_settings(conn, payload.model_dump())
+
+
+@app.get("/api/stock/products")
+def api_list_stock_products() -> dict[str, Any]:
+    require_stock_enabled(read_config_value)
+    with db() as conn:
+        return list_products(conn)
+
+
+@app.post("/api/stock/products")
+def api_create_stock_product(payload: StockProductPayload) -> dict[str, Any]:
+    require_stock_enabled(read_config_value)
+    with db() as conn:
+        return create_product(conn, payload.model_dump())
+
+
+@app.get("/api/stock/products/{product_id}")
+def api_get_stock_product(product_id: int) -> dict[str, Any]:
+    require_stock_enabled(read_config_value)
+    with db() as conn:
+        return get_product(conn, product_id)
+
+
+@app.put("/api/stock/products/{product_id}")
+def api_update_stock_product(product_id: int, payload: StockProductUpdatePayload) -> dict[str, Any]:
+    require_stock_enabled(read_config_value)
+    with db() as conn:
+        return update_product(conn, product_id, payload.model_dump())
+
+
+@app.delete("/api/stock/products/{product_id}")
+def api_delete_stock_product(product_id: int) -> dict[str, bool]:
+    require_stock_enabled(read_config_value)
+    with db() as conn:
+        delete_product(conn, product_id)
+    return {"ok": True}
+
+
+@app.get("/api/stock/movements")
+def api_list_stock_movements(
+    product_id: int | None = None,
+    type: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[dict[str, Any]]:
+    require_stock_enabled(read_config_value)
+    with db() as conn:
+        return list_movements(conn, product_id, type, date_from, date_to)
+
+
+@app.post("/api/stock/movements")
+def api_create_stock_movement(payload: StockMovementPayload) -> dict[str, Any]:
+    require_stock_enabled(read_config_value)
+    with db() as conn:
+        return create_movement(conn, payload.model_dump())
 
 
 @app.get("/")

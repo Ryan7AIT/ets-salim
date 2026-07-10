@@ -28,6 +28,14 @@ Activé uniquement si `INVOICES_ENABLED=true` dans `.env`.
 - Langue des exports : **français** ou **anglais**
 - Export **PDF** et **Excel**
 
+### Module Stock (optionnel)
+Activé uniquement si `STOCK_ENABLED=true` dans `.env`.
+
+- Catalogue de **produits** : nom, référence, photo (optionnelle), quantité, prix d'achat, prix de vente, seuil de stock bas
+- **Mouvements de stock** : entrées (achats), sorties (utilisation), ajustements
+- Historique des mouvements avec filtres (produit, type, dates)
+- Indicateurs : nombre d'articles, articles en stock bas, valeur totale du stock
+
 ## Stack technique
 
 | Couche | Technologie |
@@ -69,6 +77,9 @@ Créez un fichier `.env` à la racine du projet (il est ignoré par Git) :
 # Module factures — false par défaut si absent
 INVOICES_ENABLED=true
 
+# Module stock — false par défaut si absent
+STOCK_ENABLED=true
+
 # Notifications Telegram (optionnel)
 TELEGRAM_BOT_TOKEN=votre_token_bot
 TELEGRAM_CHAT_ID=votre_chat_id
@@ -77,6 +88,7 @@ TELEGRAM_CHAT_ID=votre_chat_id
 | Variable | Description |
 |----------|-------------|
 | `INVOICES_ENABLED` | `true`, `1`, `yes` ou `on` pour afficher le module Factures |
+| `STOCK_ENABLED` | `true`, `1`, `yes` ou `on` pour afficher le module Stock |
 | `TELEGRAM_BOT_TOKEN` | Token du bot Telegram |
 | `TELEGRAM_CHAT_ID` | ID du chat / canal de destination |
 
@@ -113,6 +125,15 @@ Changez ce mot de passe en production.
 
 Chaque document est stocké en base et lié à un client existant via `clients.id`. Le **NIF client** se renseigne dans la fiche client (module Clients) et apparaît sur les factures exportées.
 
+## Module Stock — guide rapide
+
+1. Définir `STOCK_ENABLED=true` dans `.env` et redémarrer l'API.
+2. Aller dans **Stock → Produits** pour créer vos articles (référence, prix, photo optionnelle, quantité initiale).
+3. Utiliser **Mouvements** pour enregistrer les achats (entrée), les utilisations (sortie) ou corriger le stock (ajustement).
+4. Surveiller les articles en **stock bas** via le filtre dédié et les indicateurs en haut de page.
+
+La quantité d'un produit ne change que via les mouvements (sauf quantité initiale à la création).
+
 ## Structure du projet
 
 ```
@@ -125,6 +146,7 @@ salim_app/
 └── api/
     ├── main.py                 # API FastAPI, routes, schéma SQLite
     ├── invoice_service.py      # CRUD factures, exports PDF/Excel
+    ├── stock_service.py        # CRUD stock, mouvements
     ├── notification_service.py # Notifications Telegram
     ├── send_pending_notifications.py
     ├── requirements.txt
@@ -135,7 +157,7 @@ salim_app/
 
 | Méthode | Route | Description |
 |---------|-------|-------------|
-| `GET` | `/api/config` | Feature flags (`features.invoices`) |
+| `GET` | `/api/config` | Feature flags (`features.invoices`, `features.stock`) |
 | `POST` | `/api/login` | Authentification |
 | `GET` / `PUT` | `/api/state` | État applicatif (clients, contrats, interventions) |
 | `GET` | `/api/invoices` | Liste des factures *(si module activé)* |
@@ -145,6 +167,13 @@ salim_app/
 | `GET` | `/api/invoices/{id}/export.pdf` | Export PDF |
 | `GET` | `/api/invoices/{id}/export.xlsx` | Export Excel |
 | `GET` / `PUT` | `/api/invoice-settings` | Paramètres de facturation |
+| `GET` | `/api/stock/products` | Liste des produits + résumé *(si module activé)* |
+| `POST` | `/api/stock/products` | Créer un produit |
+| `GET` | `/api/stock/products/{id}` | Détail produit + mouvements récents |
+| `PUT` | `/api/stock/products/{id}` | Modifier un produit |
+| `DELETE` | `/api/stock/products/{id}` | Supprimer un produit (sans mouvements) |
+| `GET` | `/api/stock/movements` | Liste des mouvements (filtres optionnels) |
+| `POST` | `/api/stock/movements` | Créer un mouvement |
 
 ## Scripts utiles
 
@@ -160,4 +189,5 @@ python test.py --message "Test notification"
 
 - Les données sont persistées dans SQLite ; une copie locale est aussi gardée dans le navigateur (`localStorage`) en secours.
 - Sans `INVOICES_ENABLED`, le menu Factures et les routes associées restent invisibles / inaccessibles.
+- Sans `STOCK_ENABLED`, le menu Stock et les routes associées restent invisibles / inaccessibles.
 - Ne commitez jamais le fichier `.env` ni la base `*.sqlite3`.
