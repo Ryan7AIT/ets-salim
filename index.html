@@ -895,6 +895,16 @@
                     <label>NIF</label>
                     <input type="text" v-model="clientForm.nif" placeholder="Numéro d'identification fiscale (optionnel)">
                 </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>R.C</label>
+                        <input type="text" v-model="clientForm.rc" placeholder="Registre de commerce (optionnel)">
+                    </div>
+                    <div class="form-group">
+                        <label>NIS</label>
+                        <input type="text" v-model="clientForm.nis" placeholder="Numéro d'identification statistique (optionnel)">
+                    </div>
+                </div>
                 <div class="modal-footer">
                     <button type="button" class="secondary-btn" @click="requestCloseModal()">Annuler</button>
                     <button type="submit" class="primary-btn">{{ editingClientId ? 'Mettre à jour' :
@@ -1180,6 +1190,18 @@
                             <label>NIF</label>
                             <input type="text" v-model="invoiceForm.clientNif"
                                 placeholder="Numéro d'identification fiscale du client">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>R.C</label>
+                                <input type="text" v-model="invoiceForm.clientRc"
+                                    placeholder="Registre de commerce du client">
+                            </div>
+                            <div class="form-group">
+                                <label>NIS</label>
+                                <input type="text" v-model="invoiceForm.clientNis"
+                                    placeholder="NIS du client">
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1523,6 +1545,8 @@
                             <p class="address-label">{{ invoiceText.client }}</p>
                             <p><strong>{{ previewInvoice.client?.company }}</strong></p>
                             <p v-if="previewInvoice.client?.nif">{{ invoiceText.nif }} {{ previewInvoice.client.nif }}</p>
+                            <p v-if="previewInvoice.client?.rc">{{ invoiceText.rc }} {{ previewInvoice.client.rc }}</p>
+                            <p v-if="previewInvoice.client?.nis">{{ invoiceText.nis }} {{ previewInvoice.client.nis }}</p>
                         </div>
                         <div v-else>
                             <p class="address-label">{{ invoiceText.billTo }}</p>
@@ -1531,6 +1555,8 @@
                             <p>{{ previewInvoice.client?.address }}</p>
                             <p>{{ previewInvoice.client?.email }}</p>
                             <p v-if="previewInvoice.client?.nif">{{ invoiceText.nif }} {{ previewInvoice.client.nif }}</p>
+                            <p v-if="previewInvoice.client?.rc">{{ invoiceText.rc }} {{ previewInvoice.client.rc }}</p>
+                            <p v-if="previewInvoice.client?.nis">{{ invoiceText.nis }} {{ previewInvoice.client.nis }}</p>
                         </div>
                     </div>
                     <table class="invoice-doc-table">

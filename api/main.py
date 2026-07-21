@@ -287,7 +287,9 @@ def init_db() -> None:
                 phone TEXT DEFAULT '',
                 email TEXT DEFAULT '',
                 address TEXT DEFAULT '',
-                nif TEXT DEFAULT ''
+                nif TEXT DEFAULT '',
+                rc TEXT DEFAULT '',
+                nis TEXT DEFAULT ''
             );
             CREATE TABLE IF NOT EXISTS contracts (
                 id INTEGER PRIMARY KEY,
@@ -399,6 +401,10 @@ def init_db() -> None:
         client_columns = {row[1] for row in conn.execute("PRAGMA table_info(clients)")}
         if "nif" not in client_columns:
             conn.execute("ALTER TABLE clients ADD COLUMN nif TEXT DEFAULT ''")
+        if "rc" not in client_columns:
+            conn.execute("ALTER TABLE clients ADD COLUMN rc TEXT DEFAULT ''")
+        if "nis" not in client_columns:
+            conn.execute("ALTER TABLE clients ADD COLUMN nis TEXT DEFAULT ''")
 
         invoice_columns = {row[1] for row in conn.execute("PRAGMA table_info(invoices)")}
         if "discount_amount" not in invoice_columns:
@@ -421,7 +427,7 @@ def replace_state(conn: sqlite3.Connection, state: dict[str, Any]) -> None:
 
     for client in state.get("clients", []):
         conn.execute(
-            "INSERT INTO clients (id, company, contact, phone, email, address, nif) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO clients (id, company, contact, phone, email, address, nif, rc, nis) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 client["id"],
                 client.get("company", ""),
@@ -430,6 +436,8 @@ def replace_state(conn: sqlite3.Connection, state: dict[str, Any]) -> None:
                 client.get("email", ""),
                 client.get("address", ""),
                 client.get("nif", ""),
+                client.get("rc", ""),
+                client.get("nis", ""),
             ),
         )
 

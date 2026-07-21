@@ -71,6 +71,8 @@ INVOICE_LABELS: dict[str, dict[str, str]] = {
         "tax": "Tax",
         "total": "Total",
         "nif": "NIF:",
+        "rc": "R.C:",
+        "nis": "NIS:",
         "registrationNumber": "Registration No.:",
         "rip": "RIP:",
     },
@@ -96,6 +98,8 @@ INVOICE_LABELS: dict[str, dict[str, str]] = {
         "tax": "TVA",
         "total": "Total",
         "nif": "NIF :",
+        "rc": "R.C :",
+        "nis": "NIS :",
         "registrationNumber": "N° d'immatriculation :",
         "rip": "RIP :",
     },
@@ -265,6 +269,8 @@ def serialize_invoice_row(conn: sqlite3.Connection, row: sqlite3.Row, include_it
             "email": client["email"] or "",
             "address": client["address"] or "",
             "nif": client["nif"] or "",
+            "rc": client["rc"] or "",
+            "nis": client["nis"] or "",
         }
         if client
         else None,
@@ -477,6 +483,10 @@ def proforma_client_paragraphs(client: dict[str, Any], labels: dict[str, str], v
     ]
     if client.get("nif"):
         lines.append(Paragraph(f"{labels['nif']} {client['nif']}", value_style))
+    if client.get("rc"):
+        lines.append(Paragraph(f"{labels['rc']} {client['rc']}", value_style))
+    if client.get("nis"):
+        lines.append(Paragraph(f"{labels['nis']} {client['nis']}", value_style))
     return lines
 
 
@@ -607,6 +617,10 @@ def build_pdf(invoice: dict[str, Any], settings: dict[str, Any]) -> bytes:
         ]
         if client.get("nif"):
             bill_lines.append(Paragraph(f"{labels['nif']} {client['nif']}", value_style))
+        if client.get("rc"):
+            bill_lines.append(Paragraph(f"{labels['rc']} {client['rc']}", value_style))
+        if client.get("nis"):
+            bill_lines.append(Paragraph(f"{labels['nis']} {client['nis']}", value_style))
         address_table = Table([[ship_lines, bill_lines]], colWidths=[85 * mm, 85 * mm])
     address_table.setStyle(
         TableStyle(
@@ -763,10 +777,16 @@ def build_excel(invoice: dict[str, Any], settings: dict[str, Any]) -> bytes:
     if proforma:
         sheet.append([labels["seller"], "", "", labels["client"]])
         sheet.append([settings.get("companyName", ""), "", "", client.get("company", "")])
-        client_nif = f"{labels['nif']} {client['nif']}" if client.get("nif") else ""
-        sheet.append([settings.get("address", ""), "", "", client_nif])
-        sheet.append([settings.get("email", ""), "", "", ""])
-        sheet.append([settings.get("phone", ""), "", "", ""])
+        client_identifiers = []
+        if client.get("nif"):
+            client_identifiers.append(f"{labels['nif']} {client['nif']}")
+        if client.get("rc"):
+            client_identifiers.append(f"{labels['rc']} {client['rc']}")
+        if client.get("nis"):
+            client_identifiers.append(f"{labels['nis']} {client['nis']}")
+        sheet.append([settings.get("address", ""), "", "", client_identifiers[0] if client_identifiers else ""])
+        sheet.append([settings.get("email", ""), "", "", client_identifiers[1] if len(client_identifiers) > 1 else ""])
+        sheet.append([settings.get("phone", ""), "", "", client_identifiers[2] if len(client_identifiers) > 2 else ""])
     else:
         sheet.append([labels["seller"], "", "", labels["billTo"]])
         sheet.append([settings.get("companyName", ""), "", "", f"{format_client_code(client)} - {client.get('company', '')}"])
@@ -775,6 +795,10 @@ def build_excel(invoice: dict[str, Any], settings: dict[str, Any]) -> bytes:
         sheet.append([settings.get("phone", ""), "", "", client.get("phone", "")])
         if client.get("nif"):
             sheet.append(["", "", "", f"{labels['nif']} {client['nif']}"])
+        if client.get("rc"):
+            sheet.append(["", "", "", f"{labels['rc']} {client['rc']}"])
+        if client.get("nis"):
+            sheet.append(["", "", "", f"{labels['nis']} {client['nis']}"])
     if settings.get("nif"):
         sheet.append([f"{labels['nif']} {settings.get('nif', '')}", "", "", ""])
     if settings.get("registrationNumber"):

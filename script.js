@@ -280,6 +280,8 @@ function createDefaultInvoiceForm(settings = {}) {
         taxRate: Number(settings.defaultTaxRate) || 0,
         items: [createEmptyInvoiceItem()],
         clientNif: '',
+        clientRc: '',
+        clientNis: '',
         includeCachet: false,
     };
 }
@@ -368,6 +370,8 @@ const INVOICE_LABELS = {
         tax: 'Tax',
         total: 'Total',
         nif: 'NIF:',
+        rc: 'R.C:',
+        nis: 'NIS:',
         registrationNumber: 'Registration No.:',
         rip: 'RIP:',
     },
@@ -393,6 +397,8 @@ const INVOICE_LABELS = {
         tax: 'TVA',
         total: 'Total',
         nif: 'NIF :',
+        rc: 'R.C :',
+        nis: 'NIS :',
         registrationNumber: "N° d'immatriculation :",
         rip: 'RIP :',
     },
@@ -489,7 +495,7 @@ createApp({
             editingInterventionId: null,
             selectedContractId: null,
 
-            clientForm: { company: '', contact: '', phone: '', email: '', address: '', nif: '' },
+            clientForm: { company: '', contact: '', phone: '', email: '', address: '', nif: '', rc: '', nis: '' },
             contractForm: {
                 name: '',
                 client: '',
@@ -794,10 +800,14 @@ createApp({
         'invoiceForm.clientId'(clientId) {
             if (!clientId) {
                 this.invoiceForm.clientNif = '';
+                this.invoiceForm.clientRc = '';
+                this.invoiceForm.clientNis = '';
                 return;
             }
             const client = this.clients.find(c => c.id === Number(clientId));
             this.invoiceForm.clientNif = client?.nif || '';
+            this.invoiceForm.clientRc = client?.rc || '';
+            this.invoiceForm.clientNis = client?.nis || '';
         },
 
         'stockMovementForm.productId'(productId) {
@@ -953,6 +963,8 @@ createApp({
                 if (this.invoiceForm.clientId) {
                     const client = this.clients.find(c => c.id === Number(this.invoiceForm.clientId));
                     this.invoiceForm.clientNif = client?.nif || '';
+                    this.invoiceForm.clientRc = client?.rc || '';
+                    this.invoiceForm.clientNis = client?.nis || '';
                 }
             } else if (!this.invoiceForm.dueDate) {
                 const due = new Date(this.invoiceForm.issueDate || new Date());
@@ -976,6 +988,8 @@ createApp({
                 discountAmount: invoice.discountAmount || invoice.totals?.discount || 0,
                 taxRate: invoice.taxRate || 0,
                 clientNif: invoice.client?.nif || '',
+                clientRc: invoice.client?.rc || '',
+                clientNis: invoice.client?.nis || '',
                 includeCachet: Boolean(invoice.includeCachet),
                 items: (invoice.items || []).map(item => ({
                     description: item.description,
@@ -1007,15 +1021,19 @@ createApp({
             return Math.round((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0) * 100) / 100;
         },
 
-        async saveInvoiceClientNif() {
+        async saveInvoiceClientIdentifiers() {
             const clientId = Number(this.invoiceForm.clientId);
             if (!clientId) return;
 
             const nif = (this.invoiceForm.clientNif || '').trim();
+            const rc = (this.invoiceForm.clientRc || '').trim();
+            const nis = (this.invoiceForm.clientNis || '').trim();
             const client = this.clients.find(c => c.id === clientId);
-            if (!client || client.nif === nif) return;
+            if (!client || (client.nif === nif && client.rc === rc && client.nis === nis)) return;
 
-            this.clients = this.clients.map(c => (c.id === clientId ? { ...c, nif } : c));
+            this.clients = this.clients.map(c => (
+                c.id === clientId ? { ...c, nif, rc, nis } : c
+            ));
             const state = {
                 clients: this.clients,
                 contracts: this.contracts,
@@ -1068,7 +1086,7 @@ createApp({
 
             try {
                 if (isProforma) {
-                    await this.saveInvoiceClientNif();
+                    await this.saveInvoiceClientIdentifiers();
                 }
                 if (this.editingInvoiceId) {
                     await this.apiRequest(`/invoices/${this.editingInvoiceId}`, {
@@ -1471,6 +1489,8 @@ createApp({
                 email: client.email || '',
                 address: client.address || '',
                 nif: client.nif || '',
+                rc: client.rc || '',
+                nis: client.nis || '',
             };
         },
 
@@ -1803,7 +1823,7 @@ createApp({
 
         openClientModal() {
             this.editingClientId = null;
-            this.clientForm = { company: '', contact: '', phone: '', email: '', address: '', nif: '' };
+            this.clientForm = { company: '', contact: '', phone: '', email: '', address: '', nif: '', rc: '', nis: '' };
             this.openModal('clientModal');
         },
 

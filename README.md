@@ -6,7 +6,7 @@ Application web de gestion pour **Ets Bellal Salim** : clients, contrats, interv
 
 ### Cœur de l'application
 - **Tableau de bord** — statistiques, graphiques, prochaines interventions
-- **Clients** — fiche société, contact, téléphone, email, adresse, **NIF** (optionnel)
+- **Clients** — fiche société, contact, téléphone, email, adresse, **NIF**, **R.C** (registre de commerce), **NIS** (optionnels)
 - **Contrats** — maintenance chaudière / brûleur, période, statut, suivi d'avancement
 - **Interventions** — planification, filtres, pagination, statuts
 - **Paramètres** — délai de notification avant intervention
@@ -19,10 +19,10 @@ Application web de gestion pour **Ets Bellal Salim** : clients, contrats, interv
 Activé uniquement si `INVOICES_ENABLED=true` dans `.env`.
 
 - Création / modification / suppression de **factures** ou **proformas** liées à un **client** (`client_id`)
-- Type de document : **Facture** (avec date d'échéance et bloc « Facturé à ») ou **Proforma** (sans date d'échéance, bloc **Client** avec raison sociale et NIF uniquement)
+- Type de document : **Facture** (avec date d'échéance et bloc « Facturé à ») ou **Proforma** (sans date d'échéance, bloc **Client** avec raison sociale, NIF, R.C et NIS)
 - Lignes de facture : description, quantité, prix unitaire
 - Totaux : sous-total, ajustements, **remise**, TVA, total
-- **NIF client** — champ optionnel sur la fiche client, affiché sur les factures (bloc « Facturé à »)
+- **NIF client**, **R.C** et **NIS** — champs optionnels sur la fiche client, affichés sur les factures (bloc « Facturé à » ou « Client »)
 - Paramètres entreprise : logo (texte ou image), **cachet** (image), adresse, NIF, N° d'immatriculation, **RIP**
 - Option par document : cocher **Inclure le cachet** pour l'afficher sous le total, en bas à droite (facture ou proforma)
 - Langue des exports : **français** ou **anglais**
@@ -123,7 +123,7 @@ Changez ce mot de passe en production.
 3. Créer une facture ou une proforma dans **Factures** : choisir le type, le client, ajouter les lignes.
 4. Exporter en **PDF** ou **Excel** depuis la liste ou l'aperçu.
 
-Chaque document est stocké en base et lié à un client existant via `clients.id`. Le **NIF client** se renseigne dans la fiche client (module Clients) et apparaît sur les factures exportées.
+Chaque document est stocké en base et lié à un client existant via `clients.id`. Le **NIF**, le **R.C** et le **NIS** client se renseignent dans la fiche client (module Clients) et apparaissent sur les factures exportées.
 
 ## Module Stock — guide rapide
 
