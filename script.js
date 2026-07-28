@@ -9,7 +9,6 @@ const API_BASE = window.location.protocol === 'file:' ? 'http://127.0.0.1:8000/a
 const INTERVENTION_STATUSES = ['Planifié', 'En cours', 'Terminé', 'Annulé'];
 const INTERVENTION_TYPES = { CHAUDIERE: 'chaudiere', BRULEUR: 'bruleur', CHAUDIERE_BRULEUR: 'chaudiere_bruleur' };
 const FORM_MODALS = ['clientModal', 'contractModal', 'interventionModal', 'invoiceModal', 'stockProductModal', 'stockMovementModal'];
-const CURRENT_DATA_YEAR = 2026;
 
 function parseInterventionSequence(id) {
     if (typeof id !== 'string') return 0;
@@ -152,19 +151,6 @@ function parseManualDates(value) {
         .filter(item => /^\d{4}-\d{2}-\d{2}$/.test(item));
 
     return uniqueSortedDates(matches);
-}
-
-function moveDateToYear(value, year = CURRENT_DATA_YEAR) {
-    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return '';
-    return `${year}${value.slice(4)}`;
-}
-
-function moveDatesToYear(values, year = CURRENT_DATA_YEAR) {
-    return uniqueSortedDates(
-        (Array.isArray(values) ? values : [])
-            .map(value => moveDateToYear(value, year))
-            .filter(Boolean)
-    );
 }
 
 function defaultInterventionStatus(date) {
@@ -1420,11 +1406,9 @@ createApp({
             this.notifReadStatus = stored?.notifReadStatus || {};
             this.clients = Array.isArray(stored?.clients) ? stored.clients.map(client => this.normalizeClient(client)) : defaults.clients;
             this.contracts = (Array.isArray(stored?.contracts) ? stored.contracts : defaults.contracts)
-                .map(contract => this.normalizeContract(contract))
-                .map(contract => this.migrateContractToCurrentYear(contract));
+                .map(contract => this.normalizeContract(contract));
             this.interventions = (Array.isArray(stored?.interventions) ? stored.interventions : defaults.interventions)
-                .map(intervention => this.normalizeIntervention(intervention))
-                .map(intervention => this.migrateInterventionToCurrentYear(intervention));
+                .map(intervention => this.normalizeIntervention(intervention));
             this.migrateInterventionTypes();
             this.renumberInterventionIds();
             this.syncInterventionNotifications();
@@ -1518,14 +1502,6 @@ createApp({
             };
         },
 
-        migrateContractToCurrentYear(contract) {
-            return {
-                ...contract,
-                start: moveDateToYear(contract.start) || contract.start || '',
-                end: moveDateToYear(contract.end) || contract.end || '',
-            };
-        },
-
         normalizeIntervention(intervention) {
             const sequence = parseInterventionSequence(intervention.id);
             const id = sequence > 0 ? formatInterventionId(sequence) : intervention.id;
@@ -1573,30 +1549,6 @@ createApp({
             this.notifReadStatus = Object.fromEntries(
                 Object.entries(this.notifReadStatus).map(([id, read]) => [idMap.get(id) || id, read])
             );
-        },
-
-        migrateInterventionToCurrentYear(intervention) {
-            const date = moveDateToYear(intervention.date) || intervention.date;
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-
-            const interventionDate = new Date(date);
-            interventionDate.setHours(0, 0, 0, 0);
-
-            let status = intervention.status;
-            if (
-                status === 'Terminé'
-                && !Number.isNaN(interventionDate.getTime())
-                && interventionDate >= today
-            ) {
-                status = 'Planifié';
-            }
-
-            return {
-                ...intervention,
-                date,
-                status,
-            };
         },
 
         async login() {

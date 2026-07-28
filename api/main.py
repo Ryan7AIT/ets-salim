@@ -83,7 +83,6 @@ except ImportError:
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DB_PATH = Path(__file__).with_name("plombtrack.sqlite3")
-CURRENT_DATA_YEAR = 2026
 
 
 app = FastAPI(title="PlombTrack API")
