@@ -1263,6 +1263,19 @@
                     </div>
                 </div>
 
+                <div class="form-row invoice-stamp-duty-row">
+                    <div class="form-group invoice-stamp-duty-toggle">
+                        <label class="checkbox-chip">
+                            <input type="checkbox" v-model="invoiceForm.includeStampDuty">
+                            Ajouter le droit de timbre
+                        </label>
+                    </div>
+                    <div class="form-group" v-if="invoiceForm.includeStampDuty">
+                        <label>Droit de timbre (%)</label>
+                        <input type="number" min="0" step="0.01" v-model.number="invoiceForm.stampDutyRate">
+                    </div>
+                </div>
+
                 <div class="form-group">
                     <label>Notes</label>
                     <textarea rows="2" v-model="invoiceForm.notes" placeholder="Notes affichées sur la facture..."></textarea>
@@ -1284,6 +1297,10 @@
                     <div><span>Remise</span><strong>-{{ formatInvoiceMoney(invoiceFormTotals.discount, invoiceForm.currency) }}</strong></div>
                     <div><span>Sous-total ajusté</span><strong>{{ formatInvoiceMoney(invoiceFormTotals.taxableSubtotal, invoiceForm.currency) }}</strong></div>
                     <div><span>TVA</span><strong>{{ formatInvoiceMoney(invoiceFormTotals.tax, invoiceForm.currency) }}</strong></div>
+                    <div v-if="invoiceForm.includeStampDuty">
+                        <span>Droit de timbre ({{ invoiceForm.stampDutyRate || 0 }}%)</span>
+                        <strong>{{ formatInvoiceMoney(invoiceFormTotals.stampDuty, invoiceForm.currency) }}</strong>
+                    </div>
                     <div class="invoice-total-row"><span>Total</span><strong>{{ formatInvoiceMoney(invoiceFormTotals.total, invoiceForm.currency) }}</strong></div>
                 </div>
 
@@ -1589,6 +1606,10 @@
                                 <div><span>{{ invoiceText.discount }}</span><strong>-{{ formatInvoiceMoney(previewInvoice.totals?.discount, previewInvoice.currency) }}</strong></div>
                                 <div><span>{{ invoiceText.adjustedSubtotal }}</span><strong>{{ formatInvoiceMoney(previewInvoice.totals?.taxableSubtotal, previewInvoice.currency) }}</strong></div>
                                 <div><span>{{ invoiceText.tax }} ({{ previewInvoice.taxRate }}%)</span><strong>{{ formatInvoiceMoney(previewInvoice.totals?.tax, previewInvoice.currency) }}</strong></div>
+                                <div v-if="previewInvoice.includeStampDuty">
+                                    <span>{{ invoiceText.stampDuty }} ({{ previewInvoice.stampDutyRate }}%)</span>
+                                    <strong>{{ formatInvoiceMoney(previewInvoice.totals?.stampDuty, previewInvoice.currency) }}</strong>
+                                </div>
                                 <div class="total-row"><span>{{ invoiceText.total }}</span><strong>{{ formatInvoiceMoney(previewInvoice.totals?.total, previewInvoice.currency) }}</strong></div>
                             </div>
                             <img v-if="previewInvoice.includeCachet && invoiceSettings.cachetImage"

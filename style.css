@@ -1414,6 +1414,16 @@ td {
     margin-bottom: 8px;
 }
 
+.invoice-stamp-duty-row {
+    align-items: flex-end;
+    margin-bottom: 8px;
+}
+
+.invoice-stamp-duty-toggle {
+    display: flex;
+    align-items: center;
+}
+
 .invoice-form-body {
     max-height: min(78vh, 860px);
     overflow-y: auto;

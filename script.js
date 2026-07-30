@@ -264,6 +264,8 @@ function createDefaultInvoiceForm(settings = {}) {
         adjustment: 0,
         discountAmount: 0,
         taxRate: Number(settings.defaultTaxRate) || 0,
+        includeStampDuty: false,
+        stampDutyRate: 0,
         items: [createEmptyInvoiceItem()],
         clientNif: '',
         clientRc: '',
@@ -317,7 +319,7 @@ function stockMovementTypeClass(type) {
     return '';
 }
 
-function computeInvoiceTotals(items, adjustment, taxRate, discountAmount = 0) {
+function computeInvoiceTotals(items, adjustment, taxRate, discountAmount = 0, stampDutyRate = 0, includeStampDuty = false) {
     const subtotal = (items || []).reduce((sum, item) => {
         const qty = Number(item.quantity) || 0;
         const price = Number(item.unitPrice) || 0;
@@ -329,8 +331,21 @@ function computeInvoiceTotals(items, adjustment, taxRate, discountAmount = 0) {
     const adjustedSubtotal = Math.round((roundedSubtotal + adj) * 100) / 100;
     const taxableSubtotal = Math.round(Math.max(0, adjustedSubtotal - discount) * 100) / 100;
     const tax = Math.round(taxableSubtotal * (Number(taxRate) || 0) / 100 * 100) / 100;
-    const total = Math.round((taxableSubtotal + tax) * 100) / 100;
-    return { subtotal: roundedSubtotal, adjustment: adj, discount, adjustedSubtotal, taxableSubtotal, tax, total };
+    const totalBeforeStamp = Math.round((taxableSubtotal + tax) * 100) / 100;
+    const rate = includeStampDuty ? Math.max(0, Number(stampDutyRate) || 0) : 0;
+    const stampDuty = Math.round(totalBeforeStamp * rate / 100 * 100) / 100;
+    const total = Math.round((totalBeforeStamp + stampDuty) * 100) / 100;
+    return {
+        subtotal: roundedSubtotal,
+        adjustment: adj,
+        discount,
+        adjustedSubtotal,
+        taxableSubtotal,
+        tax,
+        stampDuty,
+        stampDutyRate: rate,
+        total,
+    };
 }
 
 const INVOICE_LABELS = {
@@ -354,6 +369,7 @@ const INVOICE_LABELS = {
         discount: 'Discount',
         adjustedSubtotal: 'Adjusted Subtotal',
         tax: 'Tax',
+        stampDuty: 'Stamp duty',
         total: 'Total',
         nif: 'NIF:',
         rc: 'R.C:',
@@ -381,6 +397,7 @@ const INVOICE_LABELS = {
         discount: 'Remise',
         adjustedSubtotal: 'Sous-total ajusté',
         tax: 'TVA',
+        stampDuty: 'Droit de timbre',
         total: 'Total',
         nif: 'NIF :',
         rc: 'R.C :',
@@ -681,7 +698,9 @@ createApp({
                 this.invoiceForm.items,
                 this.invoiceForm.adjustment,
                 this.invoiceForm.taxRate,
-                this.invoiceForm.discountAmount
+                this.invoiceForm.discountAmount,
+                this.invoiceForm.stampDutyRate,
+                this.invoiceForm.includeStampDuty
             );
         },
 
@@ -973,6 +992,8 @@ createApp({
                 adjustment: invoice.adjustment || 0,
                 discountAmount: invoice.discountAmount || invoice.totals?.discount || 0,
                 taxRate: invoice.taxRate || 0,
+                includeStampDuty: Boolean(invoice.includeStampDuty),
+                stampDutyRate: invoice.stampDutyRate || 0,
                 clientNif: invoice.client?.nif || '',
                 clientRc: invoice.client?.rc || '',
                 clientNis: invoice.client?.nis || '',
@@ -1066,6 +1087,10 @@ createApp({
                 adjustment: Number(this.invoiceForm.adjustment) || 0,
                 discountAmount: Number(this.invoiceForm.discountAmount) || 0,
                 taxRate: Number(this.invoiceForm.taxRate) || 0,
+                includeStampDuty: Boolean(this.invoiceForm.includeStampDuty),
+                stampDutyRate: this.invoiceForm.includeStampDuty
+                    ? Math.max(0, Number(this.invoiceForm.stampDutyRate) || 0)
+                    : 0,
                 includeCachet: Boolean(this.invoiceForm.includeCachet),
                 items,
             };

@@ -69,6 +69,7 @@ INVOICE_LABELS: dict[str, dict[str, str]] = {
         "discount": "Discount",
         "adjustedSubtotal": "Adjusted Subtotal",
         "tax": "Tax",
+        "stampDuty": "Stamp duty",
         "total": "Total",
         "nif": "NIF:",
         "rc": "R.C:",
@@ -96,6 +97,7 @@ INVOICE_LABELS: dict[str, dict[str, str]] = {
         "discount": "Remise",
         "adjustedSubtotal": "Sous-total ajusté",
         "tax": "TVA",
+        "stampDuty": "Droit de timbre",
         "total": "Total",
         "nif": "NIF :",
         "rc": "R.C :",
@@ -174,6 +176,8 @@ def compute_totals(
     adjustment: float,
     tax_rate: float,
     discount_amount: float = 0,
+    stamp_duty_rate: float = 0,
+    include_stamp_duty: bool = False,
 ) -> dict[str, float]:
     subtotal = round(sum(line_amount(item.get("quantity", 0), item.get("unitPrice", 0)) for item in items), 2)
     adjustment = round(float(adjustment or 0), 2)
@@ -181,7 +185,10 @@ def compute_totals(
     adjusted_subtotal = round(subtotal + adjustment, 2)
     taxable_subtotal = round(max(0, adjusted_subtotal - discount), 2)
     tax = round(taxable_subtotal * float(tax_rate or 0) / 100, 2)
-    total = round(taxable_subtotal + tax, 2)
+    total_before_stamp = round(taxable_subtotal + tax, 2)
+    rate = round(max(0, float(stamp_duty_rate or 0)), 4) if include_stamp_duty else 0.0
+    stamp_duty = round(total_before_stamp * rate / 100, 2)
+    total = round(total_before_stamp + stamp_duty, 2)
     return {
         "subtotal": subtotal,
         "adjustment": adjustment,
@@ -189,6 +196,8 @@ def compute_totals(
         "adjustedSubtotal": adjusted_subtotal,
         "taxableSubtotal": taxable_subtotal,
         "tax": tax,
+        "stampDuty": stamp_duty,
+        "stampDutyRate": rate,
         "total": total,
     }
 
@@ -255,7 +264,17 @@ def fetch_invoice_items(conn: sqlite3.Connection, invoice_id: int) -> list[dict[
 
 def serialize_invoice_row(conn: sqlite3.Connection, row: sqlite3.Row, include_items: bool = True) -> dict[str, Any]:
     items = fetch_invoice_items(conn, row["id"]) if include_items else []
-    totals = compute_totals(items, row["adjustment"], row["tax_rate"], row["discount_amount"])
+    keys = row.keys()
+    include_stamp_duty = bool(row["include_stamp_duty"]) if "include_stamp_duty" in keys else False
+    stamp_duty_rate = float(row["stamp_duty_rate"] or 0) if "stamp_duty_rate" in keys else 0.0
+    totals = compute_totals(
+        items,
+        row["adjustment"],
+        row["tax_rate"],
+        row["discount_amount"],
+        stamp_duty_rate,
+        include_stamp_duty,
+    )
     client = conn.execute("SELECT * FROM clients WHERE id = ?", (row["client_id"],)).fetchone()
     return {
         "id": row["id"],
@@ -276,8 +295,10 @@ def serialize_invoice_row(conn: sqlite3.Connection, row: sqlite3.Row, include_it
         else None,
         "issueDate": row["issue_date"],
         "dueDate": row["due_date"] or "",
-        "documentType": row["document_type"] if "document_type" in row.keys() else "facture",
-        "includeCachet": bool(row["include_cachet"]) if "include_cachet" in row.keys() else False,
+        "documentType": row["document_type"] if "document_type" in keys else "facture",
+        "includeCachet": bool(row["include_cachet"]) if "include_cachet" in keys else False,
+        "includeStampDuty": include_stamp_duty,
+        "stampDutyRate": stamp_duty_rate,
         "status": row["status"],
         "currency": row["currency"],
         "notes": row["notes"] or "",
@@ -363,11 +384,13 @@ def create_invoice(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[st
         due_date = (date.fromisoformat(issue_date) + timedelta(days=int(settings.get("paymentTermsDays") or 7))).isoformat()
 
     number = (payload.get("number") or "").strip() or next_invoice_number(conn)
+    include_stamp_duty = bool(payload.get("includeStampDuty"))
+    stamp_duty_rate = max(0.0, float(payload.get("stampDutyRate") or 0)) if include_stamp_duty else 0.0
     cursor = conn.execute(
         """
         INSERT INTO invoices
-        (number, client_id, issue_date, due_date, document_type, include_cachet, status, currency, notes, adjustment, discount_amount, tax_rate, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (number, client_id, issue_date, due_date, document_type, include_cachet, status, currency, notes, adjustment, discount_amount, tax_rate, include_stamp_duty, stamp_duty_rate, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             number,
@@ -382,6 +405,8 @@ def create_invoice(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[st
             float(payload.get("adjustment") or 0),
             float(payload.get("discountAmount") or 0),
             float(payload.get("taxRate") if payload.get("taxRate") is not None else settings.get("defaultTaxRate") or 0),
+            1 if include_stamp_duty else 0,
+            stamp_duty_rate,
             now,
             now,
         ),
@@ -407,11 +432,21 @@ def update_invoice(conn: sqlite3.Connection, invoice_id: int, payload: dict[str,
         due_date = ""
     elif due_date is None:
         due_date = row["due_date"] or ""
+    keys = row.keys()
+    include_stamp_duty = bool(payload.get("includeStampDuty")) if "includeStampDuty" in payload else (
+        bool(row["include_stamp_duty"]) if "include_stamp_duty" in keys else False
+    )
+    if "stampDutyRate" in payload:
+        stamp_duty_rate = max(0.0, float(payload.get("stampDutyRate") or 0)) if include_stamp_duty else 0.0
+    else:
+        stamp_duty_rate = float(row["stamp_duty_rate"] or 0) if "stamp_duty_rate" in keys else 0.0
+        if not include_stamp_duty:
+            stamp_duty_rate = 0.0
     conn.execute(
         """
         UPDATE invoices
         SET number = ?, client_id = ?, issue_date = ?, due_date = ?, document_type = ?, include_cachet = ?, status = ?, currency = ?,
-            notes = ?, adjustment = ?, discount_amount = ?, tax_rate = ?, updated_at = ?
+            notes = ?, adjustment = ?, discount_amount = ?, tax_rate = ?, include_stamp_duty = ?, stamp_duty_rate = ?, updated_at = ?
         WHERE id = ?
         """,
         (
@@ -427,6 +462,8 @@ def update_invoice(conn: sqlite3.Connection, invoice_id: int, payload: dict[str,
             float(payload.get("adjustment") if payload.get("adjustment") is not None else row["adjustment"] or 0),
             float(payload.get("discountAmount") if payload.get("discountAmount") is not None else row["discount_amount"] or 0),
             float(payload.get("taxRate") if payload.get("taxRate") is not None else row["tax_rate"] or 0),
+            1 if include_stamp_duty else 0,
+            stamp_duty_rate,
             now,
             invoice_id,
         ),
@@ -697,8 +734,15 @@ def build_pdf(invoice: dict[str, Any], settings: dict[str, Any]) -> bytes:
         [labels["discount"], f"-{format_money(totals.get('discount', 0), currency)}"],
         [labels["adjustedSubtotal"], format_money(totals.get("taxableSubtotal", 0), currency)],
         [f"{labels['tax']} ({invoice.get('taxRate', 0):g}%)", format_money(totals.get("tax", 0), currency)],
-        [labels["total"], format_money(totals.get("total", 0), currency)],
     ]
+    if invoice.get("includeStampDuty"):
+        totals_rows.append(
+            [
+                f"{labels['stampDuty']} ({invoice.get('stampDutyRate', 0):g}%)",
+                format_money(totals.get("stampDuty", 0), currency),
+            ]
+        )
+    totals_rows.append([labels["total"], format_money(totals.get("total", 0), currency)])
     totals_table = Table(totals_rows, colWidths=[38 * mm, 32 * mm])
     totals_table.setStyle(
         TableStyle(
@@ -830,11 +874,21 @@ def build_excel(invoice: dict[str, Any], settings: dict[str, Any]) -> bytes:
     sheet.append(["", "", labels["discount"], -totals.get("discount", 0)])
     sheet.append(["", "", labels["adjustedSubtotal"], totals.get("taxableSubtotal", 0)])
     sheet.append(["", "", f"{labels['tax']} ({invoice.get('taxRate', 0):g}%)", totals.get("tax", 0)])
+    if invoice.get("includeStampDuty"):
+        sheet.append(
+            [
+                "",
+                "",
+                f"{labels['stampDuty']} ({invoice.get('stampDutyRate', 0):g}%)",
+                totals.get("stampDuty", 0),
+            ]
+        )
     sheet.append(["", "", labels["total"], totals.get("total", 0)])
+    totals_end_row = sheet.max_row
     sheet.append([])
     sheet.append([labels["notes"], invoice.get("notes") or settings.get("footerNotes") or ""])
 
-    for row in sheet.iter_rows(min_row=totals_start_row, max_row=totals_start_row + 5, min_col=3, max_col=4):
+    for row in sheet.iter_rows(min_row=totals_start_row, max_row=totals_end_row, min_col=3, max_col=4):
         for cell in row:
             cell.alignment = right
             if cell.column == 4:

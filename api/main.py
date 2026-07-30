@@ -333,6 +333,8 @@ def init_db() -> None:
                 adjustment REAL DEFAULT 0,
                 discount_amount REAL DEFAULT 0,
                 tax_rate REAL DEFAULT 0,
+                include_stamp_duty INTEGER DEFAULT 0,
+                stamp_duty_rate REAL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (client_id) REFERENCES clients(id)
@@ -412,6 +414,10 @@ def init_db() -> None:
             conn.execute("ALTER TABLE invoices ADD COLUMN document_type TEXT DEFAULT 'facture'")
         if "include_cachet" not in invoice_columns:
             conn.execute("ALTER TABLE invoices ADD COLUMN include_cachet INTEGER DEFAULT 0")
+        if "include_stamp_duty" not in invoice_columns:
+            conn.execute("ALTER TABLE invoices ADD COLUMN include_stamp_duty INTEGER DEFAULT 0")
+        if "stamp_duty_rate" not in invoice_columns:
+            conn.execute("ALTER TABLE invoices ADD COLUMN stamp_duty_rate REAL DEFAULT 0")
 
 
 def read_state() -> dict[str, Any]:
@@ -521,6 +527,8 @@ class InvoicePayload(BaseModel):
     adjustment: float = 0
     discountAmount: float = 0
     taxRate: float | None = None
+    includeStampDuty: bool = False
+    stampDutyRate: float = 0
     items: list[InvoiceItemPayload] = Field(default_factory=list)
 
 
