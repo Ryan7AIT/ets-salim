@@ -766,7 +766,7 @@
                                 <div class="form-group">
                                     <label>RIB (compte bancaire)</label>
                                     <input type="text" v-model="invoiceSettingsDraft.rip"
-                                        placeholder="Relevé d'Identité Postal">
+                                        placeholder="Relevé d'Identité Bancaire">
                                 </div>
                             </div>
                             <div class="form-row">
@@ -1556,7 +1556,7 @@
                             <p v-if="invoiceSettings.registrationNumber">
                                 {{ invoiceText.registrationNumber }} {{ invoiceSettings.registrationNumber }}
                             </p>
-                            <p v-if="invoiceSettings.rip">{{ invoiceText.rip }} {{ invoiceSettings.rip }}</p>
+                            <p v-if="invoiceSettings.rip">{{ invoiceText.rib || 'RIB :' }} {{ invoiceSettings.rip }}</p>
                         </div>
                         <div v-if="previewInvoice.documentType === 'proforma'">
                             <p class="address-label">{{ invoiceText.client }}</p>
@@ -1652,7 +1652,7 @@
 
     </div><!-- /app -->
 
-    <script src="script.js"></script>
+    <script src="script.js?v=rib"></script>
 </body>
 
 </html>

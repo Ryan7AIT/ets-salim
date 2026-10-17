@@ -376,6 +376,7 @@ const INVOICE_LABELS = {
         nis: 'NIS:',
         registrationNumber: 'Registration No.:',
         rip: 'RIB:',
+        rib: 'RIB:',
     },
     fr: {
         title: 'Facture',
@@ -404,6 +405,7 @@ const INVOICE_LABELS = {
         nis: 'NIS :',
         registrationNumber: "N° d'immatriculation :",
         rip: 'RIB :',
+        rib: 'RIB :',
     },
 };
 

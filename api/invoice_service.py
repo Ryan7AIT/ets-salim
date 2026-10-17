@@ -76,6 +76,7 @@ INVOICE_LABELS: dict[str, dict[str, str]] = {
         "nis": "NIS:",
         "registrationNumber": "Registration No.:",
         "rip": "RIB:",
+        "rib": "RIB:",
     },
     "fr": {
         "title": "Facture",
@@ -104,6 +105,7 @@ INVOICE_LABELS: dict[str, dict[str, str]] = {
         "nis": "NIS :",
         "registrationNumber": "N° d'immatriculation :",
         "rip": "RIB :",
+        "rib": "RIB :",
     },
 }
 
@@ -134,6 +136,11 @@ def default_invoice_settings() -> dict[str, Any]:
 def invoice_labels(settings: dict[str, Any]) -> dict[str, str]:
     language = (settings.get("invoiceLanguage") or "fr").lower()
     return INVOICE_LABELS.get(language, INVOICE_LABELS["fr"])
+
+
+def bank_account_label(settings: dict[str, Any]) -> str:
+    language = (settings.get("invoiceLanguage") or "fr").lower()
+    return "RIB:" if language == "en" else "RIB :"
 
 
 def is_proforma(invoice: dict[str, Any]) -> bool:
@@ -509,7 +516,7 @@ def seller_metadata_lines(settings: dict[str, Any], labels: dict[str, str]) -> l
     if settings.get("registrationNumber"):
         lines.append(f"{labels['registrationNumber']} {settings['registrationNumber']}")
     if settings.get("rip"):
-        lines.append(f"{labels['rip']} {settings['rip']}")
+        lines.append(f"{bank_account_label(settings)} {settings['rip']}")
     return [line for line in lines if line]
 
 
@@ -848,7 +855,7 @@ def build_excel(invoice: dict[str, Any], settings: dict[str, Any]) -> bytes:
     if settings.get("registrationNumber"):
         sheet.append([f"{labels['registrationNumber']} {settings.get('registrationNumber', '')}", "", "", ""])
     if settings.get("rip"):
-        sheet.append([f"{labels['rip']} {settings.get('rip', '')}", "", "", ""])
+        sheet.append([f"{bank_account_label(settings)} {settings.get('rip', '')}", "", "", ""])
     sheet.append([])
 
     headers = [labels["description"], labels["quantity"], labels["unitPrice"], labels["amount"]]
