@@ -23,7 +23,7 @@ Activé uniquement si `INVOICES_ENABLED=true` dans `.env`.
 - Lignes de facture : description, quantité, prix unitaire
 - Totaux : sous-total, ajustements, **remise**, TVA, total
 - **NIF client**, **R.C** et **NIS** — champs optionnels sur la fiche client, affichés sur les factures (bloc « Facturé à » ou « Client »)
-- Paramètres entreprise : logo (texte ou image), **cachet** (image), adresse, NIF, N° d'immatriculation, **RIP**
+- Paramètres entreprise : logo (texte ou image), **cachet** (image), adresse, NIF, N° d'immatriculation, **RIB**
 - Option par document : cocher **Inclure le cachet** pour l'afficher sous le total, en bas à droite (facture ou proforma)
 - Langue des exports : **français** ou **anglais**
 - Export **PDF** et **Excel**
@@ -116,7 +116,7 @@ Changez ce mot de passe en production.
 1. Définir `INVOICES_ENABLED=true` dans `.env` et redémarrer l'API.
 2. Aller dans **Paramètres → Facturation** :
    - Informations entreprise (nom, adresse, email, téléphone)
-   - NIF, N° d'immatriculation, RIP (optionnels — affichés seulement si renseignés)
+   - NIF, N° d'immatriculation, RIB (optionnels — affichés seulement si renseignés)
    - Logo texte ou image importée
    - Cachet (image importée) — activable par document via une case à cocher
    - Langue des factures (FR / EN), devise, TVA par défaut, délai d'échéance

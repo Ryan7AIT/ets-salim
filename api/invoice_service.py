@@ -75,7 +75,7 @@ INVOICE_LABELS: dict[str, dict[str, str]] = {
         "rc": "R.C:",
         "nis": "NIS:",
         "registrationNumber": "Registration No.:",
-        "rip": "RIP:",
+        "rip": "RIB:",
     },
     "fr": {
         "title": "Facture",
@@ -103,7 +103,7 @@ INVOICE_LABELS: dict[str, dict[str, str]] = {
         "rc": "R.C :",
         "nis": "NIS :",
         "registrationNumber": "N° d'immatriculation :",
-        "rip": "RIP :",
+        "rip": "RIB :",
     },
 }
 
